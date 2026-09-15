@@ -115,7 +115,7 @@
             #input-processor-cells = <0>;
 
             codes = <INPUT_BTN_TOUCH>;      // watch for the 'touch' pseudo button
-            bindings  = <&mo 4>;            // Activate Layer 4 while held &mo 4
+            bindings  = <&mo 8>;            // Activate Layer 4 while held &mo 8
         };
 
         swipe_button_mapper: swipe_button_mapper {
