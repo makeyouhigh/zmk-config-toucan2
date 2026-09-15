@@ -12,6 +12,7 @@
 #define FN   5
 #define AUX  6
 #define SYS  7
+#define TP   8
 
 &mt {
     quick-tap-ms = <100>;
@@ -334,6 +335,15 @@
 &bt BT_CLR  &bt BT_SEL 0  &bt BT_SEL 1  &bt BT_SEL 2  &bt BT_SEL 3  &bt BT_SEL 4  &none      &none       &none        &none  &none         &none
 &none       &none         &none         &none         &none         &none         &none      &none       &none        &none  &none         &none
 &none       &out OUT_TOG  &to 0         &bootloader   &sys_reset    &soft_off     &soft_off  &sys_reset  &bootloader  &to 0  &out OUT_TOG  &none
+                                        &none         &none         &none         &none      &none       &none
+            >;
+        };
+        TP {
+            display-name = "TP";
+            bindings = <
+&none       &none         &none         &none         &none         &none         &none      &none       &none        &none  &none         &none
+&none       &none         &none         &none         &none         &none         &none      &none       &none        &none  &none         &none
+&none       &none         &none         &none         &none         &none         &none      &none       &none        &none  &none         &none
                                         &none         &none         &none         &none      &none       &none
             >;
         };
