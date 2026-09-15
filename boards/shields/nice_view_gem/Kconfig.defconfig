@@ -40,7 +40,7 @@ config NICE_VIEW_WIDGET_STATUS
     select LV_USE_ANIMIMG
     select LV_USE_ANIMATION
     # 기존 타이핑 속도 계산 활성화: 원본 보존
-    select ZMK_WPM
+    # select ZMK_WPM
 
 config NICE_VIEW_WIDGET_INVERTED
     bool "Invert display colors"
