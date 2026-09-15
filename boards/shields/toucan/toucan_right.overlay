@@ -66,7 +66,7 @@
         filter-settings=<0x0B>;
         hold-time = <500>;
 
-        zoom;
+        //zoom;
         scroll;
         two-finger-tap;
         single-tap;
@@ -75,7 +75,7 @@
         three-finger-swipe;
         three-finger-swipe-throttle-ms = <1200>;
         switch-xy;
-        invert-scroll-y;
+        //invert-scroll-y;
 
     };
 };
