@@ -342,7 +342,7 @@
         TP {
             display-name = "TP";
             bindings = <
-&none  &none         &none         &none      &none           &mkp MCLK  &none      &none      &none      &none  &none  &none
+&none  &none         &none         &none      &none           &mkp MCLK  &mkp MCLK      &none      &none      &none  &none  &none
 &none  &kp LEFT_WIN  &kp LEFT_ALT  &kp LCTRL  &kp LEFT_SHIFT  &none      &none      &none      &none      &none  &none  &none
 &none  &none         &none         &mkp RCLK  &mkp LCLK       &none      &none      &none      &none      &none  &none  &none
                                    &mkp MCLK  &mkp RCLK       &mkp LCLK  &mkp LCLK  &mkp RCLK  &mkp MCLK
