@@ -63,9 +63,12 @@
         sensitivity = <100>;
         scroll-sensitivity = <80>;
 
-        filter-settings=<0x0A>;
+        // 필터 테스트용
+        // filter-settings=<0x0A>;
         // 기존 필터 세팅, 반응속도 조정임
-        // filter-settings=<0x0B>;
+        filter-settings=<0x0B>;
+        // 정지·저속 구간의 IIR 계수 지정 - 16(강보정) - 32(중간) - 64(약보정)
+        filter-dynamic-bottom = <32>;
         hold-time = <500>;
 
         //zoom;
