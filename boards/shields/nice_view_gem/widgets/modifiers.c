@@ -115,10 +115,10 @@ static void draw_icon(lv_obj_t *canvas, int x, int y, uint8_t modifier) {
 
 void draw_modifiers_status(lv_obj_t *canvas, uint8_t modifiers) {
     static const uint8_t order[] = {
+        MOD_LGUI,
+        MOD_LALT,
         MOD_LCTL,
         MOD_LSFT,
-        MOD_LALT,
-        MOD_LGUI,
     };
 
     /* 기존 그래프가 있던 영역만 지웁니다. */
