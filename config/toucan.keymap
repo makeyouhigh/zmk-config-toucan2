@@ -342,10 +342,10 @@
         TP {
             display-name = "TP";
             bindings = <
+&none       &none         &none         &none         &none         &mkp MCLK         &none      &none       &none        &none  &none         &none
 &none       &none         &none         &none         &none         &none         &none      &none       &none        &none  &none         &none
-&none       &none         &none         &none         &none         &none         &none      &none       &none        &none  &none         &none
-&none       &none         &none         &none         &none         &none         &none      &none       &none        &none  &none         &none
-                                        &none         &none         &none         &none      &none       &none
+&none       &none         &none         &mkp RCLK     &mkp LCLK     &none         &none      &none       &none        &none  &none         &none
+                                        &mkp MCLK     &mkp RCLK     &mkp LCLK     &mkp LCLK  &mkp RCLK   &mkp MCLK
             >;
         };
     };
