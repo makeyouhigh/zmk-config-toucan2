@@ -6,7 +6,9 @@ if(CONFIG_ZMK_DISPLAY AND CONFIG_NICE_VIEW_WIDGET_STATUS)
     zephyr_library_sources(widgets/battery_arc.c)
     zephyr_library_sources(widgets/battery_arc_peripheral.c)
     zephyr_library_sources(widgets/output_arc.c)
-    zephyr_library_sources(widgets/chart.c)
+    # 기존 타이핑 속도 그래프: 원본 보존
+    # zephyr_library_sources(widgets/chart.c)
+    # 모디키 표시
     zephyr_library_sources(widgets/modifiers.c)
   else()
     zephyr_library_sources(widgets/battery.c)
