@@ -89,6 +89,17 @@ static inline bool tps43_force_moved(uint16_t x, uint16_t y, uint16_t anchor_x,
            dy > (int32_t)threshold || dy < -(int32_t)threshold;
 }
 
+static inline bool tps43_force_small_travel(int32_t step, int32_t previous,
+                                            uint16_t threshold) {
+    if ((step > 0 && previous > 0) || (step < 0 && previous < 0)) {
+        int32_t a = step < 0 ? -step : step;
+        int32_t b = previous < 0 ? -previous : previous;
+        /* A tiny step after a large one is deceleration, not slow travel. */
+        return a <= threshold && b <= threshold && a + b > threshold;
+    }
+    return false;
+}
+
 static inline enum toucan_touch_display_state
 tps43_force_display_state(const struct tps43_force_state *state, uint8_t fingers, bool valid) {
     if (!valid || fingers == 0) {
@@ -157,13 +168,8 @@ tps43_force_step(struct tps43_force_state *state,
      * a new movement on every report. Two small steps in the same direction
      * also preserve movement-before-pressure ordering below the dead band. */
     bool prior_travel = state->previous_resting &&
-        (((dx > 0 && state->previous_dx > 0) || (dx < 0 && state->previous_dx < 0)) &&
-             (dx + state->previous_dx > config->motion_threshold ||
-              dx + state->previous_dx < -(int32_t)config->motion_threshold));
-    prior_travel |= state->previous_resting &&
-        (((dy > 0 && state->previous_dy > 0) || (dy < 0 && state->previous_dy < 0)) &&
-             (dy + state->previous_dy > config->motion_threshold ||
-              dy + state->previous_dy < -(int32_t)config->motion_threshold));
+        (tps43_force_small_travel(dx, state->previous_dx, config->motion_threshold) ||
+         tps43_force_small_travel(dy, state->previous_dy, config->motion_threshold));
     bool moving = tps43_force_moved(x, y, state->motion_x, state->motion_y,
                                     config->motion_threshold);
     state->previous_x = x;
