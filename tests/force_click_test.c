@@ -8,7 +8,7 @@
 static const struct tps43_force_config config = {
     .press_delta = 30, .release_delta = 16, .press_percent = 8, .release_percent = 3,
     .baseline_ms = 40, .debounce_ms = 16, .settle_ms = 64,
-    .motion_threshold = 6, .drag_threshold = 24,
+    .motion_threshold = 6, .drag_threshold = 48,
 };
 struct fixture { struct tps43_force_state s; int64_t t; uint16_t x, y; };
 static struct fixture fresh(void) { return (struct fixture){.x=1000, .y=1000}; }
@@ -132,7 +132,7 @@ static void test_motion_after_click_stays_fluid(void) {
     }
     /* Releasing during a drag must not re-arm another squeeze while travelling. */
     rest(&f,1000); press(&f,1200);
-    f.x+=30; assert(sample(&f,1200)==0 && f.s.dragging);
+    f.x+=config.drag_threshold+1; assert(sample(&f,1200)==0 && f.s.dragging);
     for (int i=0;i<3;i++) {
         f.x+=10;
         assert(sample(&f,1000)==(i==2 ? TPS43_FORCE_RELEASE : TPS43_FORCE_NONE));
@@ -186,7 +186,7 @@ static void test_software_taps(void) {
 static void test_drag_without_repeated_freezes(void) {
     struct fixture f=fresh(); rest(&f,1000); press(&f,1300);
     f.x += 10; assert(sample(&f,1300)==0 && f.s.suppress_motion);
-    f.x += 20; assert(sample(&f,1300)==0 && !f.s.suppress_motion);
+    f.x += config.drag_threshold; assert(sample(&f,1300)==0 && !f.s.suppress_motion);
     /* Reproduce the old stutter: pressure repeatedly crosses the release line. */
     for (int i=0;i<30;i++) {
         f.x += 8; assert(sample(&f,1020)==0);
@@ -254,6 +254,42 @@ static void test_lost_touch_release_and_heartbeat(void) {
     assert(!l.left_down && !l.release_pending);
 }
 
+static void test_drag_deadzone_and_unchanged_click(void) {
+    struct fixture f=fresh(); rest(&f,1000); press(&f,1100);
+    uint16_t anchor_x=f.x, anchor_y=f.y;
+    /* These excursions used to start dragging after 24 units. They must now
+     * stay a stationary click, even when repeated for longer than a click. */
+    for (int i=0;i<100;i++) {
+        f.x=(uint16_t)(anchor_x+(i%2 ? 48 : -48));
+        f.y=(uint16_t)(anchor_y+(i%3 ? 30 : -30));
+        assert(sample(&f,1100)==TPS43_FORCE_NONE);
+        assert(f.s.down && !f.s.dragging && f.s.suppress_motion);
+    }
+    f.x=anchor_x+49;
+    assert(sample(&f,1100)==TPS43_FORCE_NONE);
+    assert(f.s.dragging && !f.s.suppress_motion); /* Same sample, no new timer. */
+    f.x=anchor_x;
+    assert(sample(&f,1100)==TPS43_FORCE_NONE && !f.s.suppress_motion);
+    release(&f,1000);
+    assert(!f.s.down && !f.s.suppress_motion);
+
+    /* Small deformations may accompany two clicks without lifting. */
+    f=fresh(); rest(&f,1000);
+    for (int i=0;i<2;i++) {
+        press(&f,1100); f.x+=30;
+        assert(sample(&f,1100)==TPS43_FORCE_NONE && !f.s.dragging);
+        release(&f,1000);
+    }
+
+    /* Increasing drag distance must NOT enlarge the v4 press candidate area
+     * from 72 to 144 units or change its strength threshold. */
+    f=fresh(); rest(&f,1000);
+    assert(sample(&f,1100)==TPS43_FORCE_NONE && f.s.candidate);
+    f.x+=73;
+    assert(sample(&f,1100)==TPS43_FORCE_NONE);
+    assert(!f.s.candidate && !f.s.down);
+}
+
 int main(void) {
     test_rest_noise_and_taps();
     test_movement_order_and_reposition();
@@ -261,6 +297,7 @@ int main(void) {
     test_motion_after_click_stays_fluid();
     test_software_taps();
     test_drag_without_repeated_freezes();
+    test_drag_deadzone_and_unchanged_click();
     test_force_double_click();
     test_strength_and_safety();
     test_lost_touch_release_and_heartbeat();

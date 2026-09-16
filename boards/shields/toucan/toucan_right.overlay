@@ -79,7 +79,7 @@
         force-click-debounce-ms = <16>;
         force-click-settle-ms = <64>;
         force-click-motion-threshold = <6>;
-        force-click-drag-threshold = <24>;
+        force-click-drag-threshold = <48>;
         report-rate-active = <8>;
         report-rate-idle-touch = <8>;
         timeout-idle-touch = <255>;

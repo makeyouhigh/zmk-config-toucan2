@@ -8,6 +8,9 @@
 /* Shared by the device driver and the host-side behavioural tests. */
 #define TPS43_FORCE_STALE_MS 250
 #define TPS43_FORCE_STOP_MS 16
+/* Keep v4's 24 * 3 squeeze travel limit independent of drag sensitivity.
+ * Raising the drag threshold must not also admit moving false clicks. */
+#define TPS43_FORCE_PRESS_TRAVEL_LIMIT 72U
 
 enum tps43_force_event {
     TPS43_FORCE_RELEASE = -1,
@@ -214,7 +217,7 @@ tps43_force_step(struct tps43_force_state *state,
 
     if (!state->down && state->candidate &&
         tps43_force_moved(x, y, state->candidate_x, state->candidate_y,
-                          (uint32_t)config->drag_threshold * 3U)) {
+                          TPS43_FORCE_PRESS_TRAVEL_LIMIT)) {
         /* A large ongoing swipe is not a squeeze; allow normal centroid
          * deformation during confirmation instead of the old tiny anchor gate. */
         state->candidate = false;
