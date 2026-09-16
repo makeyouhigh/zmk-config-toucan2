@@ -71,10 +71,15 @@
         filter-dynamic-bottom = <32>;
         // 접촉 후 강도가 증가하면 클릭. 임계값은 실기기에서 조절할 초기값입니다.
         force-click;
-        force-click-threshold = <180>;
-        force-click-release-threshold = <100>;
-        force-click-baseline-ms = <50>;
-        force-click-debounce-ms = <20>;
+        force-click-threshold = <40>;
+        force-click-release-threshold = <20>;
+        force-click-threshold-percent = <12>;
+        force-click-release-threshold-percent = <6>;
+        force-click-baseline-ms = <80>;
+        force-click-debounce-ms = <32>;
+        force-click-settle-ms = <120>;
+        force-click-motion-threshold = <16>;
+        force-click-drag-threshold = <64>;
         report-rate-active = <8>;
         report-rate-idle-touch = <8>;
         timeout-idle-touch = <255>;
@@ -82,7 +87,7 @@
         //zoom;
         scroll;
         two-finger-tap;
-        single-tap;
+        // 한 손가락 좌클릭은 포스터치로만 처리합니다.
         // 시간 기반 길게 누르기는 포스터치로 대체합니다.
         //swipes;
         //three-finger-swipe;

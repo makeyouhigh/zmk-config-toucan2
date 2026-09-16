@@ -455,6 +455,8 @@ static void tps43_work_handler(struct k_work *work) {
      *   [4] NUM_FINGERS        (0x0011)
      *   [5..6] REL_X           (0x0012, big-endian)
      *   [7..8] REL_Y           (0x0014, big-endian)
+     *   [9..10] ABS_X          (0x0016, big-endian; force click only)
+     *   [11..12] ABS_Y         (0x0018, big-endian; force click only)
      *   [13..14] TOUCH_STRENGTH (0x001A, big-endian; force click only)
      *   [15] TOUCH_AREA        (0x001C; force click only)
      */
@@ -506,17 +508,21 @@ static void tps43_work_handler(struct k_work *work) {
         uint16_t strength = sys_get_be16(&touch_data[TPS43_REG_TOUCH_STRENGTH -
                                                     TPS43_REG_GESTURE_EVENTS_0]);
         uint8_t area = touch_data[TPS43_REG_TOUCH_AREA - TPS43_REG_GESTURE_EVENTS_0];
+        uint16_t x = sys_get_be16(&touch_data[TPS43_REG_ABS_X - TPS43_REG_GESTURE_EVENTS_0]);
+        uint16_t y = sys_get_be16(&touch_data[TPS43_REG_ABS_Y - TPS43_REG_GESTURE_EVENTS_0]);
         bool valid = !(touch_data[3] & (TPS43_PALM_DETECT | TPS43_TOO_MANY_FINGERS)) &&
                      (num_fingers == 0 || area != 0);
         tps43_force_report(dev, tps43_force_step(&drv_data->force, &config->force,
-                                               k_uptime_get(), num_fingers, strength, valid));
+                                               k_uptime_get(), num_fingers, strength, valid, x, y));
         if (drv_data->force.down) {
             k_work_reschedule(&drv_data->force_watchdog, K_MSEC(TPS43_FORCE_STALE_MS));
         } else {
             k_work_cancel_delayable(&drv_data->force_watchdog);
         }
-        LOG_DBG("Force strength=%u area=%u baseline=%u down=%d",
-                strength, area, drv_data->force.baseline, drv_data->force.down);
+        LOG_DBG("Force strength=%u area=%u baseline=%u ready=%d down=%d drag=%d freeze=%d x=%u y=%u",
+                strength, area, drv_data->force.baseline, drv_data->force.ready,
+                drv_data->force.down, drv_data->force.dragging,
+                drv_data->force.suppress_motion, x, y);
     }
     if (is_touching != drv_data->touching) {
         drv_data->touching = is_touching;
@@ -598,8 +604,9 @@ static void tps43_work_handler(struct k_work *work) {
             LOG_INF("Zooming %d, rel_x=%d", zoom_delta, rel_x);
             input_report_rel(dev, INPUT_REL_MISC, zoom_delta, true, K_FOREVER);
             is_zoom_active = false;
-        } else {
-            // Normal cursor movement
+        } else if (!config->force_click || (is_touching && !drv_data->force.suppress_motion)) {
+            /* Drop squeeze/release displacement instead of replaying it later.
+             * Scroll and zoom keep their own movement paths above. */
             if (rel_x != 0 ) {
                 int32_t scaled_x = ((int32_t)rel_x * config->sensitivity) / 100;
                 rel_x = (int16_t)CLAMP(scaled_x, INT16_MIN, INT16_MAX);
@@ -1546,6 +1553,11 @@ static int tps43_init(const struct device *dev) {
             .release_delta = DT_INST_PROP(inst, force_click_release_threshold),                     \
             .baseline_ms = DT_INST_PROP(inst, force_click_baseline_ms),                              \
             .debounce_ms = DT_INST_PROP(inst, force_click_debounce_ms),                              \
+            .press_percent = DT_INST_PROP(inst, force_click_threshold_percent),                     \
+            .release_percent = DT_INST_PROP(inst, force_click_release_threshold_percent),           \
+            .motion_threshold = DT_INST_PROP(inst, force_click_motion_threshold),                   \
+            .drag_threshold = DT_INST_PROP(inst, force_click_drag_threshold),                       \
+            .settle_ms = DT_INST_PROP(inst, force_click_settle_ms),                                  \
         },                                                                                         \
         .two_finger_tap = DT_INST_PROP(inst, two_finger_tap),                                        \
         .scroll = DT_INST_PROP(inst, scroll),                                                        \
@@ -1609,7 +1621,17 @@ static int tps43_init(const struct device *dev) {
     BUILD_ASSERT(DT_INST_PROP(inst, force_click_baseline_ms) >= 0 &&                                  \
                  DT_INST_PROP(inst, force_click_baseline_ms) <= 1000, "Invalid baseline interval");  \
     BUILD_ASSERT(DT_INST_PROP(inst, force_click_debounce_ms) >= 0 &&                                  \
-                 DT_INST_PROP(inst, force_click_debounce_ms) <= 1000, "Invalid debounce interval");
+                 DT_INST_PROP(inst, force_click_debounce_ms) <= 1000, "Invalid debounce interval");  \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_threshold_percent) <= 100 &&                          \
+                 DT_INST_PROP(inst, force_click_release_threshold_percent) >= 0 &&                  \
+                 DT_INST_PROP(inst, force_click_threshold_percent) >=                               \
+                 DT_INST_PROP(inst, force_click_release_threshold_percent), "Invalid force ratio"); \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_motion_threshold) > 0 &&                             \
+                 DT_INST_PROP(inst, force_click_drag_threshold) >=                                  \
+                 DT_INST_PROP(inst, force_click_motion_threshold) &&                                \
+                 DT_INST_PROP(inst, force_click_drag_threshold) <= UINT16_MAX, "Invalid dead zone");\
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_settle_ms) >= 0 &&                                    \
+                 DT_INST_PROP(inst, force_click_settle_ms) <= 1000, "Invalid settling interval");
 
 
 DT_INST_FOREACH_STATUS_OKAY(TPS43_INIT)

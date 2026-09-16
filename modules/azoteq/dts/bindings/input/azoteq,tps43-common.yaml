@@ -2,39 +2,77 @@ properties:
   force-click:
     type: boolean
     description: |
-      Use an increase in touch strength over the initial contact baseline for
+      Use an increase in touch strength over an adaptive resting baseline for
       left-button down/up. Replaces timed press-and-hold while enabled. A normal
-      single tap remains available, but is suppressed after a force click in
+      single tap can be enabled separately, but is suppressed after a force click in
       the same contact. Two-finger tap and scroll remain available. Strength is not a
       calibrated force measurement. Streams sensor frames only during contact.
 
   force-click-threshold:
     type: int
-    default: 180
+    default: 40
     description: |
-      Touch-strength increase over baseline needed to press the left button.
+      Minimum touch-strength increase over baseline needed to press the left button.
+      The larger of this value and force-click-threshold-percent is used.
       Must exceed force-click-release-threshold. Uncalibrated starting value.
 
   force-click-release-threshold:
     type: int
-    default: 100
+    default: 20
     description: |
-      Release the left button when the increase over baseline falls to this
-      value or below. Finger lift releases immediately without debounce.
+      Release when the increase falls to the larger of this value and the
+      percentage threshold or below. Finger lift releases immediately.
+
+  force-click-threshold-percent:
+    type: int
+    default: 12
+    description: |
+      Press threshold as a percentage of the resting strength (0 to 100).
+      The absolute minimum still applies. Zero disables percentage scaling.
+
+  force-click-release-threshold-percent:
+    type: int
+    default: 6
+    description: |
+      Release threshold as a percentage of the resting strength (0 to 100).
+      Must not exceed the press percentage. The absolute minimum still applies.
 
   force-click-baseline-ms:
     type: int
-    default: 50
+    default: 80
     description: |
-      Initial contact averaging interval in milliseconds (0 to 1000).
-      At least two samples are required; no click is emitted during calibration.
+      Stable contact averaging interval in milliseconds (0 to 1000).
+      Movement and unstable landing restart calibration. At least four samples
+      are required; no click is emitted during calibration.
 
   force-click-debounce-ms:
     type: int
-    default: 20
+    default: 32
     description: |
       Required continuous duration above/below the press/release thresholds
       in milliseconds (0 to 1000). Invalid input releases immediately.
+
+  force-click-settle-ms:
+    type: int
+    default: 120
+    description: Minimum age of a new contact before arming a click, in milliseconds (0 to 1000).
+
+  force-click-motion-threshold:
+    type: int
+    default: 16
+    description: |
+      Displacement along either absolute sensor axis that restarts resting
+      calibration before a click. Uses sensor coordinate units, not screen pixels.
+      Does not block movement after a drag has started. Must be positive.
+
+  force-click-drag-threshold:
+    type: int
+    default: 64
+    description: |
+      Displacement along either absolute sensor axis from the press candidate
+      position required to start dragging. Smaller movements are discarded.
+      Uses sensor coordinate units, not screen pixels. Must be at least the
+      motion threshold and no more than 65535.
 
   rdy-gpios:
     type: phandle-array
