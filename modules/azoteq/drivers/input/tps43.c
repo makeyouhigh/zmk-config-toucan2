@@ -15,6 +15,7 @@
 #include <errno.h>
 
 #include "tps43.h"
+#include <toucan/packed_xy.h>
 
 LOG_MODULE_REGISTER(tps43, CONFIG_INPUT_LOG_LEVEL);
 
@@ -51,7 +52,11 @@ static void tps43_force_cancel_and_report(const struct device *dev) {
     struct tps43_drv_data *data = dev->data;
     tps43_tap_cancel(&data->tap);
     k_work_cancel_delayable(&data->force_watchdog);
-    tps43_force_report(dev, tps43_force_cancel(&data->force, true));
+    enum tps43_force_event event = tps43_force_cancel(&data->force, true);
+    if (tps43_hold_cancel(&data->hold, true) == TPS43_FORCE_RELEASE) {
+        event = TPS43_FORCE_RELEASE;
+    }
+    tps43_force_report(dev, event);
     if (data->touching) {
         data->touching = false;
         input_report_key(dev, INPUT_BTN_TOUCH, 0, true, K_MSEC(5));
@@ -63,7 +68,7 @@ static void tps43_force_watchdog(struct k_work *work) {
     struct tps43_drv_data *data = CONTAINER_OF(k_work_delayable_from_work(work),
                                               struct tps43_drv_data, force_watchdog);
     k_sem_take(&data->lock, K_FOREVER);
-    if (data->touching || data->force.down) {
+    if (data->touching || data->force.down || data->hold.down) {
         tps43_force_cancel_and_report(data->dev);
         LOG_WRN("Touch and force released: no fresh sensor data");
         if (!data->suspended) {
@@ -457,6 +462,7 @@ static void tps43_work_handler(struct k_work *work) {
     bool is_drag_active = drv_data->drag_active;
     bool communication_closed = false;
     bool software_tap = false;
+    bool suppress_motion = false;
     int ret;
 
     // If device is in suspend, ignore interrupt (RDY should be disabled)
@@ -553,16 +559,40 @@ static void tps43_work_handler(struct k_work *work) {
         bool valid = !(touch_data[3] & (TPS43_PALM_DETECT | TPS43_TOO_MANY_FINGERS)) &&
                      (num_fingers == 0 || area != 0);
         is_touching = is_touching && valid;
-        tps43_force_report(dev, tps43_force_step(&drv_data->force, &config->force,
-                                               sample_ms, num_fingers, strength, valid, x, y));
+        bool was_held = drv_data->hold.down;
+        if (!was_held) {
+            tps43_force_report(dev, tps43_force_step(&drv_data->force, &config->force,
+                                                    sample_ms, num_fingers, strength, valid, x, y));
+        }
+        if (config->press_and_hold) {
+            bool force_busy = !was_held && (drv_data->force.down || drv_data->force.preparing ||
+                              drv_data->force.candidate || drv_data->force.tap_consumed);
+            uint32_t hold_ms = (config->tap_time >= 0 ? config->tap_time : 200) +
+                               (config->hold_time >= 0 ? config->hold_time : 300);
+            enum tps43_force_event event = tps43_hold_step(&drv_data->hold, sample_ms,
+                num_fingers, valid, force_busy, x, y, hold_ms,
+                config->tap_distance >= 0 ? config->tap_distance : 16,
+                config->force.drag_threshold);
+            tps43_force_report(dev, event);
+            if (was_held && !drv_data->hold.down) {
+                tps43_force_cancel(&drv_data->force, num_fingers != 0);
+            }
+        }
         if (config->single_tap) {
             software_tap = tps43_tap_step(&drv_data->tap, sample_ms, num_fingers,
-                                           valid, drv_data->force.tap_consumed, x, y,
+                                           valid, drv_data->force.tap_consumed || drv_data->hold.down,
+                                           x, y,
                                            config->tap_time >= 0 ? config->tap_time : 200,
                                            config->tap_distance >= 0 ? config->tap_distance : 16);
         }
-        tps43_force_display_report(dev, tps43_force_display_state(&drv_data->force,
-                                                                 num_fingers, valid));
+        suppress_motion = drv_data->hold.down ? !drv_data->hold.dragging :
+                            drv_data->force.suppress_motion || drv_data->tap.suppress_motion;
+        if (config->press_and_hold && drv_data->hold.active &&
+            !drv_data->hold.blocked && !drv_data->hold.down) {
+            suppress_motion = true;
+        }
+        tps43_force_display_report(dev, drv_data->hold.down ? TOUCAN_TOUCH_PRESSED :
+                                    tps43_force_display_state(&drv_data->force, num_fingers, valid));
         if (is_touching) {
             k_work_reschedule_for_queue(&drv_data->work_q, &drv_data->force_watchdog,
                                          K_MSEC(TPS43_FORCE_STALE_MS));
@@ -659,7 +689,7 @@ static void tps43_work_handler(struct k_work *work) {
             LOG_DBG("Zooming %d, rel_x=%d", zoom_delta, rel_x);
             input_report_rel(dev, INPUT_REL_MISC, zoom_delta, true, K_MSEC(5));
             is_zoom_active = false;
-        } else if (!config->force_click || (is_touching && !drv_data->force.suppress_motion)) {
+        } else if (!config->force_click || (is_touching && !suppress_motion)) {
             /* Drop squeeze/release displacement instead of replaying it later.
              * Scroll and zoom keep their own movement paths above. */
             if (rel_x != 0 ) {
@@ -672,11 +702,10 @@ static void tps43_work_handler(struct k_work *work) {
             }
             LOG_DBG("Sending movement: dx=%d, dy=%d", rel_x, rel_y);
 
-            if (rel_x != 0) {
-                input_report_rel(dev, INPUT_REL_X, rel_x, rel_y == 0, K_MSEC(5));
-            }
-            if (rel_y != 0) {
-                input_report_rel(dev, INPUT_REL_Y, rel_y, true, K_MSEC(5));
+            if (rel_x != 0 || rel_y != 0) {
+                /* One notification per sensor frame instead of one per axis. */
+                input_report_abs(dev, TOUCAN_INPUT_PACKED_XY_CODE,
+                                  toucan_pack_xy(rel_x, rel_y), true, K_MSEC(5));
             }
         }
     }
@@ -1624,6 +1653,9 @@ static int tps43_init(const struct device *dev) {
             .release_percent = DT_INST_PROP(inst, force_click_release_threshold_percent),           \
             .motion_threshold = DT_INST_PROP(inst, force_click_motion_threshold),                   \
             .drag_threshold = DT_INST_PROP(inst, force_click_drag_threshold),                       \
+            .drag_delay_ms = DT_INST_PROP(inst, force_click_drag_delay_ms),                         \
+            .repeat_ms = DT_INST_PROP(inst, force_click_repeat_ms),                                 \
+            .repeat_distance = DT_INST_PROP(inst, force_click_repeat_distance),                     \
             .settle_ms = DT_INST_PROP(inst, force_click_settle_ms),                                  \
         },                                                                                         \
         .two_finger_tap = DT_INST_PROP(inst, two_finger_tap),                                        \

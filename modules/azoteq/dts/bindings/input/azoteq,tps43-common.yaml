@@ -3,7 +3,7 @@ properties:
     type: boolean
     description: |
       Use an increase in touch strength over an adaptive resting baseline for
-      left-button down/up. Replaces timed press-and-hold while enabled. A normal
+      left-button down/up. Timed press-and-hold can also be enabled. A normal
       single tap can be enabled separately, but is suppressed after a force click in
       the same contact. Two-finger tap and scroll remain available. Strength is not a
       calibrated force measurement. Streams sensor frames only during contact.
@@ -75,6 +75,26 @@ properties:
       position required to start dragging. Smaller movements are discarded.
       Uses sensor coordinate units, not screen pixels. Must be at least the
       motion threshold and no more than 65535.
+
+  force-click-drag-delay-ms:
+    type: int
+    default: 180
+    description: |
+      Minimum duration of a confirmed force press before arming a drag.
+      All movement during this short-click interval is discarded, and the drag
+      anchor is reset when it expires. Clicking itself is still immediate.
+
+  force-click-repeat-ms:
+    type: int
+    default: 250
+    description: Cursor lock after a stationary click release, for a second squeeze.
+
+  force-click-repeat-distance:
+    type: int
+    default: 64
+    description: |
+      Movement from the release point that exits repeat-click cursor lock early.
+      Inside this region force recalibration and movement gating stay suspended.
 
   rdy-gpios:
     type: phandle-array
@@ -236,7 +256,10 @@ properties:
   press-and-hold:
     type: boolean
     required: false
-    description: Enable press and hold gesture
+    description: |
+      Enable timed press and hold. With force-click this runs in software:
+      rest within tap-distance for tap-time plus hold-time, then hold the left
+      button until lift. Force clicks take precedence during the same contact.
 
   invert-x:
     type: boolean
@@ -501,7 +524,7 @@ properties:
     type: int
     required: false
     description: |
-      Minimum time for a press-and-hold gesture in milliseconds (2 bytes).
-      Sets the minimum duration a finger must be held to trigger a hold gesture.
+      Additional time after tap-time before a press-and-hold gesture, in milliseconds.
+      The total resting duration is tap-time plus hold-time.
       Written to the HOLD_TIME register (0x06BD).
       Only written if explicitly set.

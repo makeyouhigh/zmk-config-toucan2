@@ -80,6 +80,9 @@
         force-click-settle-ms = <64>;
         force-click-motion-threshold = <6>;
         force-click-drag-threshold = <24>;
+        force-click-drag-delay-ms = <180>;
+        force-click-repeat-ms = <250>;
+        force-click-repeat-distance = <64>;
         report-rate-active = <8>;
         report-rate-idle-touch = <8>;
         timeout-idle-touch = <255>;
@@ -88,7 +91,9 @@
         scroll;
         two-finger-tap;
         single-tap;
-        // 시간 기반 길게 누르기는 포스터치로 대체합니다.
+        press-and-hold;
+        tap-time = <200>;
+        hold-time = <300>; // tap-time + hold-time = 500ms
         //swipes;
         //three-finger-swipe;
         //three-finger-swipe-throttle-ms = <1200>;

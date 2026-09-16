@@ -8,6 +8,7 @@
 #include <zephyr/kernel.h>
 #include "tps43_force.h"
 #include "tps43_tap.h"
+#include "tps43_hold.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -277,6 +278,7 @@ struct tps43_drv_data {
     struct k_work_delayable force_watchdog;
     struct tps43_force_state force;
     struct tps43_tap_state tap;
+    struct tps43_hold_state hold;
     int64_t force_display_report_ms;
     uint8_t force_display_state;
     uint8_t event_config;

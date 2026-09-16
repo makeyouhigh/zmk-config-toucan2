@@ -3,11 +3,12 @@
 
 #include "tps43_force.h"
 
-/* Software single-tap recognition never delays or consumes cursor motion.
- * The chip's single-tap recognizer suppresses relative XY while it decides. */
+/* Suppress only the small landing/lift displacement of a possible tap.
+ * Crossing the tap distance resumes pointing immediately, without a timer. */
 struct tps43_tap_state {
     bool active;
     bool blocked;
+    bool suppress_motion;
     int64_t started_ms;
     int64_t last_sample_ms;
     uint16_t x;
@@ -17,12 +18,14 @@ struct tps43_tap_state {
 static inline void tps43_tap_cancel(struct tps43_tap_state *state) {
     state->active = false;
     state->blocked = true;
+    state->suppress_motion = false;
 }
 
 static inline bool tps43_tap_step(struct tps43_tap_state *state, int64_t now_ms,
                                   uint8_t fingers, bool valid, bool force_consumed,
                                   uint16_t x, uint16_t y, uint16_t max_ms,
                                   uint16_t max_distance) {
+    state->suppress_motion = false;
     if (!valid || fingers > 1 || force_consumed ||
         (state->active && now_ms - state->last_sample_ms > TPS43_FORCE_STALE_MS)) {
         tps43_tap_cancel(state);
@@ -47,5 +50,6 @@ static inline bool tps43_tap_step(struct tps43_tap_state *state, int64_t now_ms,
         tps43_force_moved(x, y, state->x, state->y, max_distance)) {
         tps43_tap_cancel(state);
     }
+    state->suppress_motion = state->active && !state->blocked;
     return false;
 }
