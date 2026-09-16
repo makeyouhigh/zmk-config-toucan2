@@ -95,7 +95,7 @@ static inline bool tps43_force_small_travel(int32_t step, int32_t previous,
         int32_t a = step < 0 ? -step : step;
         int32_t b = previous < 0 ? -previous : previous;
         /* A tiny step after a large one is deceleration, not slow travel. */
-        return a <= threshold && b <= threshold && a + b > threshold;
+        return a <= threshold && b <= threshold;
     }
     return false;
 }
@@ -167,7 +167,7 @@ tps43_force_step(struct tps43_force_state *state,
     /* Accumulate slow travel without treating bounded back-and-forth jitter as
      * a new movement on every report. Two small steps in the same direction
      * also preserve movement-before-pressure ordering below the dead band. */
-    bool prior_travel = state->previous_resting &&
+    bool prior_travel = (state->previous_resting || was_moving) &&
         (tps43_force_small_travel(dx, state->previous_dx, config->motion_threshold) ||
          tps43_force_small_travel(dy, state->previous_dy, config->motion_threshold));
     bool moving = tps43_force_moved(x, y, state->motion_x, state->motion_y,

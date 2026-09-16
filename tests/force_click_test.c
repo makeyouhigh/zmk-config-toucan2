@@ -110,6 +110,17 @@ static void test_stop_squeeze_with_jitter(void) {
 }
 
 static void test_motion_after_click_stays_fluid(void) {
+    for (uint16_t step=1;step<=6;step++) {
+        struct fixture slow=fresh(); rest(&slow,1000);
+        press(&slow,1200); release(&slow,1000);
+        for (int i=0;i<2;i++) assert(sample(&slow,1000)==0);
+        slow.x+=step; assert(sample(&slow,1000)==0);
+        for (int i=0;i<100;i++) {
+            slow.x+=step;
+            assert(sample(&slow,(uint16_t)(1100+(i%3)*70))==0);
+            assert(!slow.s.down && !slow.s.suppress_motion);
+        }
+    }
     struct fixture f=fresh(); rest(&f,1000); press(&f,1200);
     release(&f,1000);
     for (int i=0;i<2;i++) assert(sample(&f,1000)==0);
