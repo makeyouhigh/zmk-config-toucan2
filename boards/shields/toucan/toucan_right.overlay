@@ -69,13 +69,20 @@
         filter-settings=<0x0B>;
         // 정지·저속 구간의 IIR 계수 지정 - 16(강보정) - 32(중간) - 64(약보정)
         filter-dynamic-bottom = <32>;
-        hold-time = <500>;
+        // 접촉 후 강도가 증가하면 클릭. 임계값은 실기기에서 조절할 초기값입니다.
+        force-click;
+        force-click-threshold = <180>;
+        force-click-release-threshold = <100>;
+        force-click-baseline-ms = <50>;
+        force-click-debounce-ms = <20>;
+        report-rate-active = <8>;
+        report-rate-idle-touch = <8>;
+        timeout-idle-touch = <255>;
 
         //zoom;
         scroll;
         two-finger-tap;
-        single-tap;
-        press-and-hold;
+        // 포스터치가 좌클릭을 처리합니다.
         //swipes;
         //three-finger-swipe;
         //three-finger-swipe-throttle-ms = <1200>;
