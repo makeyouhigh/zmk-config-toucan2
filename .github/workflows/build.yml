@@ -10,6 +10,8 @@ jobs:
         run: |
           cc -std=c11 -Wall -Wextra -Werror -pedantic -fsanitize=undefined,address -Imodules/azoteq/include tests/force_click_test.c -o /tmp/force-click-test
           /tmp/force-click-test
+          cc -std=c11 -Wall -Wextra -Werror -pedantic -fsanitize=undefined,address -Imodules/azoteq/include tests/mouse_queue_test.c -o /tmp/mouse-queue-test
+          /tmp/mouse-queue-test
   build:
     needs: force-click-tests
     uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@v0.3
