@@ -528,7 +528,8 @@ static void tps43_work_handler(struct k_work *work) {
 
         LOG_INF("Gestures: Single=0x%02X, Multi=0x%02X", gestures_events[0], gestures_events[1]);
 
-        if (!config->force_click && (gestures_events[0] & TPS43_SINGLE_TAP)) {
+        if (config->single_tap && (gestures_events[0] & TPS43_SINGLE_TAP) &&
+            (!config->force_click || !drv_data->force.tap_consumed)) {
             LOG_INF("Single tap → LEFT BUTTON");
             input_report_key(dev, INPUT_BTN_0, 1, true, K_FOREVER);
             input_report_key(dev, INPUT_BTN_0, 0, true, K_FOREVER);
@@ -694,7 +695,7 @@ static int tps43_configure_device(const struct device *dev) {
     // enable single gestures at hardware level
     {
         uint8_t single_gestures = 0;
-        single_gestures |= config->single_tap && !config->force_click ? TPS43_SINGLE_TAP : 0;
+        single_gestures |= config->single_tap ? TPS43_SINGLE_TAP : 0;
         single_gestures |= config->press_and_hold && !config->force_click ? TPS43_PRESS_AND_HOLD : 0;
         single_gestures |= config->swipes ? TPS43_SWIPE_UP : 0;
         single_gestures |= config->swipes ? TPS43_SWIPE_DOWN : 0;

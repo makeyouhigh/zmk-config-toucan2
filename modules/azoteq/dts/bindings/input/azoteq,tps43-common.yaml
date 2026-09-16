@@ -3,8 +3,9 @@ properties:
     type: boolean
     description: |
       Use an increase in touch strength over the initial contact baseline for
-      left-button down/up. Replaces single-tap and timed press-and-hold while
-      enabled; two-finger tap and scroll remain available. Strength is not a
+      left-button down/up. Replaces timed press-and-hold while enabled. A normal
+      single tap remains available, but is suppressed after a force click in
+      the same contact. Two-finger tap and scroll remain available. Strength is not a
       calibrated force measurement. Streams sensor frames only during contact.
 
   force-click-threshold:

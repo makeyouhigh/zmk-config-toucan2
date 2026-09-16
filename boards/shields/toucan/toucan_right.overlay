@@ -82,7 +82,8 @@
         //zoom;
         scroll;
         two-finger-tap;
-        // 포스터치가 좌클릭을 처리합니다.
+        single-tap;
+        // 시간 기반 길게 누르기는 포스터치로 대체합니다.
         //swipes;
         //three-finger-swipe;
         //three-finger-swipe-throttle-ms = <1200>;

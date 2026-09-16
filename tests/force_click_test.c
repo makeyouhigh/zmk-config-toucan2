@@ -10,6 +10,7 @@ static void rest(struct tps43_force_state *s, int64_t start, uint16_t strength) 
         assert(tps43_force_step(s, &config, start + i, 1, strength, true) == 0);
     }
     assert(s->ready && !s->down);
+    assert(!s->tap_consumed);
 }
 
 static void press(struct tps43_force_state *s, int64_t start, uint16_t strength) {
@@ -17,6 +18,7 @@ static void press(struct tps43_force_state *s, int64_t start, uint16_t strength)
     assert(tps43_force_step(s, &config, start + 10, 1, strength, true) == 0);
     assert(tps43_force_step(s, &config, start + 20, 1, strength, true) == 1);
     assert(s->down);
+    assert(s->tap_consumed);
 }
 
 int main(void) {
@@ -46,6 +48,7 @@ int main(void) {
     assert(tps43_force_step(&s, &config, 61040, 1, 1050, true) == -1);
     press(&s, 61050, 1300);
     assert(tps43_force_step(&s, &config, 61080, 0, 0, true) == -1);
+    assert(s.tap_consumed); /* no extra hardware tap click on the lift frame */
     assert(tps43_force_step(&s, &config, 61090, 0, 0, true) == 0);
 
     /* Each new contact gets its own baseline, without unsigned underflow. */
@@ -83,6 +86,13 @@ int main(void) {
     press(&s, 65160, 65535);
     assert(tps43_force_step(&s, &config, 65190, 1, 64000, true) == 0);
     assert(tps43_force_step(&s, &config, 65210, 1, 64000, true) == -1);
+
+    /* An ordinary quick tap remains available on the next contact. */
+    tps43_force_step(&s, &config, 65300, 0, 0, true);
+    tps43_force_step(&s, &config, 65400, 1, 1000, true);
+    assert(!s.tap_consumed);
+    tps43_force_step(&s, &config, 65420, 0, 0, true);
+    assert(!s.tap_consumed);
 
     puts("Force-click behavioural tests passed");
     return 0;

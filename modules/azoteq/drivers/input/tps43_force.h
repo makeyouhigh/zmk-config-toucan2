@@ -25,6 +25,7 @@ struct tps43_force_state {
     bool ready;
     bool blocked;
     bool down;
+    bool tap_consumed;
     bool candidate;
     int64_t started_ms;
     int64_t last_sample_ms;
@@ -37,7 +38,10 @@ struct tps43_force_state {
 static inline enum tps43_force_event
 tps43_force_cancel(struct tps43_force_state *state, bool block_until_lift) {
     bool was_down = state->down;
-    *state = (struct tps43_force_state){.blocked = block_until_lift};
+    bool consumed = state->tap_consumed || was_down || block_until_lift;
+    /* Keep this through the lift frame, where the chip reports SINGLE_TAP. */
+    *state = (struct tps43_force_state){.blocked = block_until_lift,
+                                      .tap_consumed = consumed};
     return was_down ? TPS43_FORCE_RELEASE : TPS43_FORCE_NONE;
 }
 
@@ -64,6 +68,7 @@ tps43_force_step(struct tps43_force_state *state,
     state->last_sample_ms = now_ms;
     if (!state->active) {
         state->active = true;
+        state->tap_consumed = false;
         state->started_ms = now_ms;
     }
     if (!state->ready) {
@@ -93,5 +98,8 @@ tps43_force_step(struct tps43_force_state *state,
     }
     state->candidate = false;
     state->down = next_down;
+    if (next_down) {
+        state->tap_consumed = true;
+    }
     return next_down ? TPS43_FORCE_PRESS : TPS43_FORCE_RELEASE;
 }
