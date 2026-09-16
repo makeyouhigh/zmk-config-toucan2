@@ -38,7 +38,7 @@ static void tps43_force_display_report(const struct device *dev, uint8_t value) 
     if (!changed && now - data->force_display_report_ms < 250) {
         return;
     }
-    if (input_report_abs(dev, INPUT_ABS_PRESSURE, value, false, K_NO_WAIT) == 0) {
+    if (input_report_abs(dev, TOUCAN_INPUT_TOUCH_STATE_CODE, value, false, K_NO_WAIT) == 0) {
         data->force_display_report_ms = now;
         data->force_display_state = value;
     }

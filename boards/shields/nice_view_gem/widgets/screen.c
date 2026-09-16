@@ -314,7 +314,7 @@ static atomic_t touch_state;
 static atomic_t force_updated_ms;
 
 static void force_input_event(struct input_event *event) {
-    if (event->type == INPUT_EV_ABS && event->code == INPUT_ABS_PRESSURE) {
+    if (event->type == INPUT_EV_ABS && event->code == TOUCAN_INPUT_TOUCH_STATE_CODE) {
         atomic_set(&touch_state, CLAMP(event->value, TOUCAN_TOUCH_NONE, TOUCAN_TOUCH_PRESSED));
         atomic_set(&force_updated_ms, (atomic_val_t)k_uptime_get_32());
     }
