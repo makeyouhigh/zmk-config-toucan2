@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <toucan/force_display.h>
 
 /* Shared by the device driver and the host-side behavioural tests. */
 #define TPS43_FORCE_STALE_MS 250
@@ -76,6 +77,14 @@ static inline bool tps43_force_moved(uint16_t x, uint16_t y, uint16_t anchor_x,
     int32_t dy = (int32_t)y - anchor_y;
     return dx > threshold || dx < -(int32_t)threshold ||
            dy > threshold || dy < -(int32_t)threshold;
+}
+
+static inline enum toucan_touch_display_state
+tps43_force_display_state(const struct tps43_force_state *state, uint8_t fingers, bool valid) {
+    if (!valid || fingers == 0) {
+        return TOUCAN_TOUCH_NONE;
+    }
+    return state->down ? TOUCAN_TOUCH_PRESSED : TOUCAN_TOUCH_CONTACT;
 }
 
 /* Re-establish the resting level after movement or unstable initial contact. */

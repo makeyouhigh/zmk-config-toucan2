@@ -27,11 +27,29 @@ static void tps43_force_report(const struct device *dev, enum tps43_force_event 
     }
 }
 
+/* The split input transport forwards this absolute value to the LCD side.
+ * sync=false keeps display-only updates from generating mouse HID reports.
+ * Never wait for display telemetry while servicing the sensor/button path. */
+static void tps43_force_display_report(const struct device *dev, uint8_t value) {
+    struct tps43_drv_data *data = dev->data;
+    int64_t now = k_uptime_get();
+    bool changed = value != data->force_display_state;
+    /* State transitions are immediate; a heartbeat lets the LCD expire stale data. */
+    if (!changed && now - data->force_display_report_ms < 250) {
+        return;
+    }
+    if (input_report_abs(dev, INPUT_ABS_PRESSURE, value, false, K_NO_WAIT) == 0) {
+        data->force_display_report_ms = now;
+        data->force_display_state = value;
+    }
+}
+
 /* Caller holds the driver lock. Release even when the I2C bus is unavailable. */
 static void tps43_force_cancel_and_report(const struct device *dev) {
     struct tps43_drv_data *data = dev->data;
     k_work_cancel_delayable(&data->force_watchdog);
     tps43_force_report(dev, tps43_force_cancel(&data->force, true));
+    tps43_force_display_report(dev, TOUCAN_TOUCH_NONE);
 }
 
 static void tps43_force_watchdog(struct k_work *work) {
@@ -514,6 +532,8 @@ static void tps43_work_handler(struct k_work *work) {
                      (num_fingers == 0 || area != 0);
         tps43_force_report(dev, tps43_force_step(&drv_data->force, &config->force,
                                                k_uptime_get(), num_fingers, strength, valid, x, y));
+        tps43_force_display_report(dev, tps43_force_display_state(&drv_data->force,
+                                                                 num_fingers, valid));
         if (drv_data->force.down) {
             k_work_reschedule(&drv_data->force_watchdog, K_MSEC(TPS43_FORCE_STALE_MS));
         } else {

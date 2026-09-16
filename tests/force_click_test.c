@@ -20,6 +20,7 @@ static void rest(struct tps43_force_state *s, int64_t t, uint16_t strength) {
         assert(sample(s, t + i, strength, 1000, 1000) == TPS43_FORCE_NONE);
     }
     assert(s->ready && !s->down);
+    assert(tps43_force_display_state(s, 1, true) == TOUCAN_TOUCH_CONTACT);
 }
 
 static void press(struct tps43_force_state *s, int64_t t, uint16_t strength) {
@@ -29,6 +30,7 @@ static void press(struct tps43_force_state *s, int64_t t, uint16_t strength) {
     }
     assert(sample(s, t + 32, strength, 1000, 1000) == TPS43_FORCE_PRESS);
     assert(s->down && s->tap_consumed && s->suppress_motion);
+    assert(tps43_force_display_state(s, 1, true) == TOUCAN_TOUCH_PRESSED);
 }
 
 static void test_rest_landing_noise(void) {
@@ -159,6 +161,7 @@ static void test_safety(void) {
     press(&s, 128, 1300);
     assert(tps43_force_step(&s, &config, 168, 0, 0, true, 0, 0) == -1);
     assert(s.tap_consumed && s.suppress_motion);
+    assert(tps43_force_display_state(&s, 0, true) == TOUCAN_TOUCH_NONE);
     rest(&s, 176, 1000);
     press(&s, 304, 1300);
     assert(tps43_force_step(&s, &config, 344, 2, 4000, true, 1000, 1000) == -1);
@@ -166,6 +169,7 @@ static void test_safety(void) {
         assert(sample(&s, t, 6000, 1000, 1000) == 0);
     }
     assert(s.blocked && !s.down);
+    assert(tps43_force_display_state(&s, 2, true) == TOUCAN_TOUCH_CONTACT);
     assert(tps43_force_step(&s, &config, 552, 0, 0, true, 0, 0) == 0);
     rest(&s, 560, 1000);
     press(&s, 688, 1300);
@@ -191,6 +195,7 @@ static void test_boundaries(void) {
     }
     assert(!s.down); /* Saturation cannot satisfy a percentage increase. */
     assert(sample(&s, 176, 1, 1000, 1000) == 0); /* No unsigned underflow. */
+    assert(tps43_force_display_state(&s, 1, false) == TOUCAN_TOUCH_NONE);
     assert(tps43_force_moved(0, 0, 65535, 65535, 40));
     assert(tps43_force_moved(65535, 65535, 0, 0, 40));
     assert(!tps43_force_moved(1000, 1040, 1000, 1000, 40));

@@ -1,4 +1,9 @@
 #include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/input/input.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/sys/atomic.h>
+#include <toucan/force_display.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -82,7 +87,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[],
     /* 기존 그래프 그리기: 원본 보존 */
     // draw_chart_status(canvas, state);
 
-    draw_modifiers_status(canvas, state->modifiers);
+    draw_modifiers_status(canvas, state->modifiers, state->touch_state);
 #endif
 
     draw_layer_status(canvas, state);
@@ -303,6 +308,24 @@ ZMK_SUBSCRIPTION(widget_output_status, zmk_ble_active_profile_changed);
 #if defined(CONFIG_TOUCAN_STATUS_SCREEN) && CONFIG_TOUCAN_STATUS_SCREEN == 2
 
 #define MODIFIERS_REFRESH_MS 50
+#define FORCE_DISPLAY_STALE_MS 750
+
+static atomic_t touch_state;
+static atomic_t force_updated_ms;
+
+static void force_input_event(struct input_event *event) {
+    if (event->type == INPUT_EV_ABS && event->code == INPUT_ABS_PRESSURE) {
+        atomic_set(&touch_state, CLAMP(event->value, TOUCAN_TOUCH_NONE, TOUCAN_TOUCH_PRESSED));
+        atomic_set(&force_updated_ms, (atomic_val_t)k_uptime_get_32());
+    }
+}
+
+INPUT_CALLBACK_DEFINE(DEVICE_DT_GET(DT_NODELABEL(trackpad_split)), force_input_event);
+
+static uint8_t current_touch_state(void) {
+    uint32_t age = k_uptime_get_32() - (uint32_t)atomic_get(&force_updated_ms);
+    return age > FORCE_DISPLAY_STALE_MS ? TOUCAN_TOUCH_NONE : (uint8_t)atomic_get(&touch_state);
+}
 
 static void modifiers_refresh_work_cb(struct k_work *work);
 
@@ -321,16 +344,18 @@ static void modifiers_refresh_work_cb(struct k_work *work) {
     const uint8_t modifiers = modifiers_normalize(
         zmk_hid_get_keyboard_report()->body.modifiers
     );
+    const uint8_t touch = current_touch_state();
 
     struct zmk_widget_screen *widget;
 
     SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
-        if (widget->state.modifiers != modifiers) {
+        if (widget->state.modifiers != modifiers || widget->state.touch_state != touch) {
             widget->state.modifiers = modifiers;
+            widget->state.touch_state = touch;
 
             /* 가운데 모디키 영역만 갱신합니다. */
             lv_obj_t *canvas = lv_obj_get_child(widget->obj, 0);
-            draw_modifiers_status(canvas, modifiers);
+            draw_modifiers_status(canvas, modifiers, touch);
         }
     }
 

@@ -271,6 +271,8 @@ struct tps43_drv_data {
     struct k_work work;
     struct k_work_delayable force_watchdog;
     struct tps43_force_state force;
+    int64_t force_display_report_ms;
+    uint8_t force_display_state;
     uint8_t event_config;
     bool force_streaming;
 

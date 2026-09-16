@@ -21,6 +21,7 @@ struct status_state {
     // 기존 타이핑 속도 상태: 원본 보존
     // uint8_t wpm;
     uint8_t modifiers;
+    uint8_t touch_state;
 #if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
     struct zmk_endpoint_instance selected_endpoint;
     int active_profile_index;

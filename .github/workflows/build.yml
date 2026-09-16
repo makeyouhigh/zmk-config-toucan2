@@ -8,7 +8,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: 포스터치 동작 검증
         run: |
-          cc -std=c11 -Wall -Wextra -Werror -pedantic -fsanitize=undefined,address tests/force_click_test.c -o /tmp/force-click-test
+          cc -std=c11 -Wall -Wextra -Werror -pedantic -fsanitize=undefined,address -Imodules/azoteq/include tests/force_click_test.c -o /tmp/force-click-test
           /tmp/force-click-test
   build:
     needs: force-click-tests
