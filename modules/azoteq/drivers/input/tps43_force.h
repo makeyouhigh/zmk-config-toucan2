@@ -226,8 +226,9 @@ tps43_force_step(struct tps43_force_state *state,
     state->previous_resting = delta < (int32_t)(press_threshold / 3U);
 
     bool repeat_lock = now_ms < state->repeat_until_ms;
-    if (repeat_lock && tps43_force_moved(x, y, state->repeat_x, state->repeat_y,
-                                         config->repeat_distance)) {
+    if (repeat_lock && (tps43_force_moved(x, y, state->repeat_x, state->repeat_y,
+                                         config->repeat_distance) ||
+                         (state->previous_resting && (moving || prior_travel)))) {
         state->repeat_until_ms = 0;
         repeat_lock = false;
         state->quiet_until_ms = 0;
@@ -236,9 +237,8 @@ tps43_force_step(struct tps43_force_state *state,
         state->motion_until_ms = now_ms + TPS43_FORCE_STOP_MS;
         was_moving = true;
     }
-    if (repeat_lock) {
-        state->suppress_motion = true;
-    }
+    /* Repeat protection freezes calibration, not the cursor. Once pressure
+     * has been released, normal motion must not wait out a 250 ms timer. */
 
     if (!state->down && state->candidate &&
         tps43_force_moved(x, y, state->candidate_x, state->candidate_y,

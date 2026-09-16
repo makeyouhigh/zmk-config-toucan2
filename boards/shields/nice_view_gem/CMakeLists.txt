@@ -10,6 +10,7 @@ if(CONFIG_ZMK_DISPLAY AND CONFIG_NICE_VIEW_WIDGET_STATUS)
     # zephyr_library_sources(widgets/chart.c)
     # 모디키 표시
     zephyr_library_sources(widgets/modifiers.c)
+    zephyr_library_sources(widgets/force_values.c)
   else()
     zephyr_library_sources(widgets/battery.c)
     zephyr_library_sources(widgets/battery_peripheral.c)

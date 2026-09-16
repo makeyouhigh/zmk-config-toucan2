@@ -126,8 +126,8 @@ static void test_motion_after_click_stays_fluid(void) {
     for (uint16_t step=1;step<=6;step++) {
         struct fixture slow=fresh(); rest(&slow,1000);
         press(&slow,1200); release(&slow,1000);
-        finish_repeat_guard(&slow);
         slow.x+=step; assert(sample(&slow,1000)==0);
+        slow.x+=step; assert(sample(&slow,1000)==0 && !slow.s.suppress_motion);
         for (int i=0;i<100;i++) {
             slow.x+=step;
             assert(sample(&slow,(uint16_t)(1100+(i%3)*70))==0);
@@ -229,11 +229,10 @@ static void test_click_target_lock(void) {
         assert(sample(&f,1140)==0 && f.s.suppress_motion && !f.s.dragging);
     }
     release(&f,1000);
-    for (int i=0;i<8;i++) {
-        f.x+=3;
-        assert(sample(&f,1000)==0 && f.s.suppress_motion);
-    }
-    /* Second squeeze still clicks at the first target despite sideways drift. */
+    /* The repeat window preserves calibration, without freezing normal XY. */
+    assert(sample(&f,1000)==0);
+    assert(sample(&f,1000)==0 && !f.s.suppress_motion);
+    /* Sideways motion during the second squeeze remains suppressed. */
     for (int i=0;i<3;i++) {
         f.x+=3;
         assert(sample(&f,1140)==(i==2 ? TPS43_FORCE_PRESS : TPS43_FORCE_NONE));
@@ -253,29 +252,29 @@ static void test_click_target_lock(void) {
 
 static void test_timed_press_hold(void) {
     struct tps43_hold_state s={0};
-    for (int64_t t=0;t<500;t+=8) {
-        assert(tps43_hold_step(&s,t,1,true,false,1000,1000,500,16,24)==0);
+    for (int64_t t=0;t<300;t+=8) {
+        assert(tps43_hold_step(&s,t,1,true,false,1000,1000,300,16,24)==0);
         assert(!s.down);
     }
-    assert(tps43_hold_step(&s,504,1,true,false,1000,1000,500,16,24)==TPS43_FORCE_PRESS);
+    assert(tps43_hold_step(&s,304,1,true,false,1000,1000,300,16,24)==TPS43_FORCE_PRESS);
     assert(s.down && !s.dragging);
-    assert(tps43_hold_step(&s,512,1,true,false,1010,1000,500,16,24)==0 && !s.dragging);
-    assert(tps43_hold_step(&s,520,1,true,false,1040,1000,500,16,24)==0 && s.dragging);
+    assert(tps43_hold_step(&s,312,1,true,false,1010,1000,300,16,24)==0 && !s.dragging);
+    assert(tps43_hold_step(&s,320,1,true,false,1040,1000,300,16,24)==0 && s.dragging);
     for (int i=0;i<60;i++) {
-        assert(tps43_hold_step(&s,528+i*8,1,true,false,(uint16_t)(1040+i*3),1000,
-                               500,16,24)==0 && s.down && s.dragging);
+        assert(tps43_hold_step(&s,328+i*8,1,true,false,(uint16_t)(1040+i*3),1000,
+                               300,16,24)==0 && s.down && s.dragging);
     }
-    assert(tps43_hold_step(&s,1016,0,true,false,0,0,500,16,24)==TPS43_FORCE_RELEASE);
+    assert(tps43_hold_step(&s,816,0,true,false,0,0,300,16,24)==TPS43_FORCE_RELEASE);
     /* Early travel or a force click must not later trigger a second held click. */
-    assert(tps43_hold_step(&s,1100,1,true,false,1000,1000,500,16,24)==0);
-    assert(tps43_hold_step(&s,1108,1,true,false,1020,1000,500,16,24)==0);
+    assert(tps43_hold_step(&s,1100,1,true,false,1000,1000,300,16,24)==0);
+    assert(tps43_hold_step(&s,1108,1,true,false,1020,1000,300,16,24)==0);
     for (int i=0;i<100;i++) {
-        assert(tps43_hold_step(&s,1116+i*8,1,true,false,1020,1000,500,16,24)==0);
+        assert(tps43_hold_step(&s,1116+i*8,1,true,false,1020,1000,300,16,24)==0);
     }
     assert(!s.down && s.blocked);
-    tps43_hold_step(&s,1920,0,true,false,0,0,500,16,24);
-    tps43_hold_step(&s,2000,1,true,false,1000,1000,500,16,24);
-    tps43_hold_step(&s,2008,1,true,true,1000,1000,500,16,24);
+    tps43_hold_step(&s,1920,0,true,false,0,0,300,16,24);
+    tps43_hold_step(&s,2000,1,true,false,1000,1000,300,16,24);
+    tps43_hold_step(&s,2008,1,true,true,1000,1000,300,16,24);
     assert(s.blocked && !s.down);
     /* A stale or invalid held contact must release the button. */
     tps43_hold_cancel(&s,false);

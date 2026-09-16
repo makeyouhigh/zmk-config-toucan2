@@ -281,6 +281,11 @@ struct tps43_drv_data {
     struct tps43_hold_state hold;
     int64_t force_display_report_ms;
     uint8_t force_display_state;
+    int64_t force_values_ms;
+    uint16_t force_values_peak;
+    uint16_t force_values_baseline;
+    uint16_t force_values_threshold;
+    bool force_values_touching;
     uint8_t event_config;
     bool force_streaming;
 

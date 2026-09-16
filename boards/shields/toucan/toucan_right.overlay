@@ -93,7 +93,7 @@
         single-tap;
         press-and-hold;
         tap-time = <200>;
-        hold-time = <300>; // tap-time + hold-time = 500ms
+        hold-time = <100>; // tap-time + hold-time = 300ms
         //swipes;
         //three-finger-swipe;
         //three-finger-swipe-throttle-ms = <1200>;

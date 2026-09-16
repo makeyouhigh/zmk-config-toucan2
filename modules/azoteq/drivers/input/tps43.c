@@ -16,6 +16,7 @@
 
 #include "tps43.h"
 #include <toucan/packed_xy.h>
+#include <toucan/force_values.h>
 
 LOG_MODULE_REGISTER(tps43, CONFIG_INPUT_LOG_LEVEL);
 
@@ -44,6 +45,41 @@ static void tps43_force_display_report(const struct device *dev, uint8_t value) 
     if (input_report_abs(dev, TOUCAN_INPUT_TOUCH_STATE_CODE, value, false, K_NO_WAIT) == 0) {
         data->force_display_report_ms = now;
         data->force_display_state = value;
+    }
+}
+
+/* Diagnostic numbers never delay cursor or button reports. Send at most two
+ * packets per 200 ms, only while resting/squeezing or on lift. Keep the peak
+ * over the complete contact so a short press remains readable after release. */
+static void tps43_force_values_report(const struct device *dev, int64_t now,
+                                       uint16_t strength, uint8_t fingers, bool moving) {
+    struct tps43_drv_data *data = dev->data;
+    const struct tps43_config *config = dev->config;
+    bool touching = fingers == 1;
+    bool lifted = !touching && data->force_values_touching;
+    if (touching) {
+        if (!data->force_values_touching) {
+            data->force_values_peak = 0;
+        }
+        data->force_values_peak = MAX(data->force_values_peak, strength);
+        data->force_values_baseline = data->force.baseline;
+        data->force_values_threshold = data->force.ready ?
+            tps43_force_threshold(data->force.baseline, config->force.press_delta,
+                                  config->force.press_percent) : 0;
+    }
+    data->force_values_touching = touching;
+    if ((!touching && !lifted) || moving ||
+        (!lifted && now - data->force_values_ms < TOUCAN_FORCE_VALUES_INTERVAL_MS)) {
+        return;
+    }
+    int ret = input_report_abs(dev, TOUCAN_INPUT_FORCE_VALUES_CODE,
+        toucan_force_pair(touching ? strength : 0, data->force_values_baseline), false, K_NO_WAIT);
+    if (!ret) {
+        ret = input_report_abs(dev, TOUCAN_INPUT_FORCE_PEAK_CODE,
+            toucan_force_pair(data->force_values_peak, data->force_values_threshold), false, K_NO_WAIT);
+    }
+    if (!ret) {
+        data->force_values_ms = now;
     }
 }
 
@@ -463,6 +499,7 @@ static void tps43_work_handler(struct k_work *work) {
     bool communication_closed = false;
     bool software_tap = false;
     bool suppress_motion = false;
+    uint16_t diagnostic_strength = 0;
     int ret;
 
     // If device is in suspend, ignore interrupt (RDY should be disabled)
@@ -553,6 +590,7 @@ static void tps43_work_handler(struct k_work *work) {
     if (config->force_click) {
         uint16_t strength = sys_get_be16(&touch_data[TPS43_REG_TOUCH_STRENGTH -
                                                     TPS43_REG_GESTURE_EVENTS_0]);
+        diagnostic_strength = strength;
         uint8_t area = touch_data[TPS43_REG_TOUCH_AREA - TPS43_REG_GESTURE_EVENTS_0];
         uint16_t x = sys_get_be16(&touch_data[TPS43_REG_ABS_X - TPS43_REG_GESTURE_EVENTS_0]);
         uint16_t y = sys_get_be16(&touch_data[TPS43_REG_ABS_Y - TPS43_REG_GESTURE_EVENTS_0]);
@@ -568,7 +606,7 @@ static void tps43_work_handler(struct k_work *work) {
             bool force_busy = !was_held && (drv_data->force.down || drv_data->force.preparing ||
                               drv_data->force.candidate || drv_data->force.tap_consumed);
             uint32_t hold_ms = (config->tap_time >= 0 ? config->tap_time : 200) +
-                               (config->hold_time >= 0 ? config->hold_time : 300);
+                               (config->hold_time >= 0 ? config->hold_time : 100);
             enum tps43_force_event event = tps43_hold_step(&drv_data->hold, sample_ms,
                 num_fingers, valid, force_busy, x, y, hold_ms,
                 config->tap_distance >= 0 ? config->tap_distance : 16,
@@ -585,12 +623,10 @@ static void tps43_work_handler(struct k_work *work) {
                                            config->tap_time >= 0 ? config->tap_time : 200,
                                            config->tap_distance >= 0 ? config->tap_distance : 16);
         }
+        /* Recognize taps/holds in parallel. Neither timer is allowed to delay
+         * ordinary pointing; only an actual squeeze or held click locks XY. */
         suppress_motion = drv_data->hold.down ? !drv_data->hold.dragging :
-                            drv_data->force.suppress_motion || drv_data->tap.suppress_motion;
-        if (config->press_and_hold && drv_data->hold.active &&
-            !drv_data->hold.blocked && !drv_data->hold.down) {
-            suppress_motion = true;
-        }
+                            drv_data->force.suppress_motion;
         tps43_force_display_report(dev, drv_data->hold.down ? TOUCAN_TOUCH_PRESSED :
                                     tps43_force_display_state(&drv_data->force, num_fingers, valid));
         if (is_touching) {
@@ -708,6 +744,10 @@ static void tps43_work_handler(struct k_work *work) {
                                   toucan_pack_xy(rel_x, rel_y), true, K_MSEC(5));
             }
         }
+    }
+    if (config->force_click) {
+        tps43_force_values_report(dev, sample_ms, diagnostic_strength, num_fingers,
+            (rel_x != 0 || rel_y != 0) && !suppress_motion && num_fingers != 0);
     }
 
 done:

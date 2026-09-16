@@ -42,6 +42,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // #include "chart.h"
 
 #include "modifiers.h"
+#include "force_values.h"
 #else
 #include "battery.h"
 #include "battery_peripheral.h"
@@ -94,6 +95,9 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[],
     draw_profile_status(canvas, state);
     draw_battery_status(canvas, state);
     draw_battery_peripheral_status(canvas, state);
+#if defined(CONFIG_TOUCAN_STATUS_SCREEN) && CONFIG_TOUCAN_STATUS_SCREEN == 2
+    draw_force_values(canvas, true);
+#endif
 }
 
 /**
@@ -357,6 +361,7 @@ static void modifiers_refresh_work_cb(struct k_work *work) {
             lv_obj_t *canvas = lv_obj_get_child(widget->obj, 0);
             draw_modifiers_status(canvas, modifiers, touch);
         }
+        draw_force_values(lv_obj_get_child(widget->obj, 0), false);
     }
 
     if (!is_sleep_screen_active()) {
