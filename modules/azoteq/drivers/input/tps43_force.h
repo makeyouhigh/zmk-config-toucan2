@@ -41,6 +41,7 @@ struct tps43_force_state {
     bool dragging;
     bool suppress_motion;
     bool previous_resting;
+    bool movement_last_frame;
     bool preparing;
     bool drag_ready;
     int32_t previous_dx;
@@ -180,11 +181,18 @@ tps43_force_step(struct tps43_force_state *state,
     /* Accumulate slow travel without treating bounded back-and-forth jitter as
      * a new movement on every report. Two small steps in the same direction
      * also preserve movement-before-pressure ordering below the dead band. */
-    bool prior_travel = (state->previous_resting || was_moving) &&
-        (tps43_force_small_travel(dx, state->previous_dx, config->motion_threshold) ||
-         tps43_force_small_travel(dy, state->previous_dy, config->motion_threshold));
     bool moving = tps43_force_moved(x, y, state->motion_x, state->motion_y,
                                     config->motion_threshold);
+    /* A late sample is not evidence that the finger stopped. At >=16 ms the
+     * old time-only guard expired between reports, letting continuous travel
+     * plus a strength change become a false force press and a cursor lock.
+     * Preserve observed travel across variable report intervals; an actually
+     * settled coordinate frame clears this history and permits a squeeze. */
+    bool prior_travel = (state->movement_last_frame && moving) ||
+        ((state->movement_last_frame || state->previous_resting || was_moving) &&
+         (tps43_force_small_travel(dx, state->previous_dx, config->motion_threshold) ||
+          tps43_force_small_travel(dy, state->previous_dy, config->motion_threshold)));
+    state->movement_last_frame = moving || prior_travel;
     state->previous_x = x;
     state->previous_y = y;
     state->previous_dx = dx;

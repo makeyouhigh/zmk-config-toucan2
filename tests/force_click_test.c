@@ -288,6 +288,45 @@ static void test_timed_press_hold(void) {
     assert(tps43_hold_step(&s,4300,1,true,false,1000,1000,0,16,24)==TPS43_FORCE_RELEASE);
 }
 
+static void test_travel_with_variable_report_intervals(void) {
+    const int intervals[]={8,12,16,24,32,48,80};
+    const uint16_t steps[]={1,2,6,7,12,30,60};
+    for (unsigned int gap=0;gap<sizeof(intervals)/sizeof(intervals[0]);gap++) {
+        for (unsigned int step=0;step<sizeof(steps)/sizeof(steps[0]);step++) {
+            for (int after_click=0;after_click<2;after_click++) {
+                struct fixture f=fresh(); rest(&f,1000);
+                if (after_click) { press(&f,1300); release(&f,1000); }
+                for (int i=0;i<100;i++) {
+                    /* Alternate delayed frames with 8 ms frames. Keep travelling
+                     * while contact strength fluctuates above the click line. */
+                    int dt=(i%3)==0 ? 8 : intervals[gap];
+                    f.t+=dt-8;
+                    f.x+=steps[step];
+                    uint16_t strength=i<8 ? 1000 : (uint16_t)(1200+(i%3)*100);
+                    assert(sample(&f,strength)==TPS43_FORCE_NONE);
+                    assert(!f.s.down);
+                    /* The existing 16 ms release guard may cover the first
+                     * sample, but there must be no recurring freeze afterwards. */
+                    if (i>=2) { assert(!f.s.suppress_motion); }
+                }
+                /* Variable timing must not permanently disable a real click
+                 * after stopping at the new position. */
+                rest(&f,1000);
+                press(&f,1500);
+                release(&f,1000);
+            }
+        }
+    }
+    /* Turning a corner is still movement, not a stationary squeeze. */
+    struct fixture f=fresh(); rest(&f,1000);
+    for (int i=0;i<120;i++) {
+        f.t+=16; /* Total 24 ms per sample. */
+        if (i%2) { f.y+=12; } else { f.x+=12; }
+        assert(sample(&f,i<8 ? 1000 : 1400)==0);
+        assert(!f.s.down && !f.s.suppress_motion);
+    }
+}
+
 static void test_rest_then_force_double_click_with_hold_enabled(void) {
     struct fixture f=fresh();
     struct tps43_hold_state hold={0};
@@ -381,6 +420,7 @@ int main(void) {
     test_rest_noise_and_taps();
     test_movement_order_and_reposition();
     test_stop_squeeze_with_jitter();
+    test_travel_with_variable_report_intervals();
     test_motion_after_click_stays_fluid();
     test_software_taps();
     test_click_target_lock();
