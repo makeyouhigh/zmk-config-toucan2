@@ -5,6 +5,7 @@
 struct tps43_hold_state {
     bool active;
     bool blocked;
+    bool armed;
     bool down;
     bool dragging;
     int64_t started_ms;
@@ -44,14 +45,22 @@ tps43_hold_step(struct tps43_hold_state *s, int64_t now, uint8_t fingers, bool v
         }
         return TPS43_FORCE_NONE;
     }
+    /* Dwell arms dragging; it must not hold the button down before movement.
+     * Otherwise resting a finger monopolizes BTN_0 and subsequent force
+     * squeezes (including a double click) are ignored until the finger lifts. */
+    if (now - s->started_ms >= hold_ms) {
+        s->armed = true;
+    }
+    if (s->armed) {
+        if (tps43_force_moved(x, y, s->x, s->y, drag_distance)) {
+            s->down = true;
+            s->dragging = true;
+            return TPS43_FORCE_PRESS;
+        }
+        return TPS43_FORCE_NONE;
+    }
     if (tps43_force_moved(x, y, s->x, s->y, rest_distance)) {
         return tps43_hold_cancel(s, true);
-    }
-    if (now - s->started_ms >= hold_ms) {
-        s->down = true;
-        s->x = x;
-        s->y = y;
-        return TPS43_FORCE_PRESS;
     }
     return TPS43_FORCE_NONE;
 }

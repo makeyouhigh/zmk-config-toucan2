@@ -256,10 +256,10 @@ static void test_timed_press_hold(void) {
         assert(tps43_hold_step(&s,t,1,true,false,1000,1000,300,16,24)==0);
         assert(!s.down);
     }
-    assert(tps43_hold_step(&s,304,1,true,false,1000,1000,300,16,24)==TPS43_FORCE_PRESS);
-    assert(s.down && !s.dragging);
+    assert(tps43_hold_step(&s,304,1,true,false,1000,1000,300,16,24)==TPS43_FORCE_NONE);
+    assert(s.armed && !s.down && !s.dragging);
     assert(tps43_hold_step(&s,312,1,true,false,1010,1000,300,16,24)==0 && !s.dragging);
-    assert(tps43_hold_step(&s,320,1,true,false,1040,1000,300,16,24)==0 && s.dragging);
+    assert(tps43_hold_step(&s,320,1,true,false,1040,1000,300,16,24)==TPS43_FORCE_PRESS && s.dragging);
     for (int i=0;i<60;i++) {
         assert(tps43_hold_step(&s,328+i*8,1,true,false,(uint16_t)(1040+i*3),1000,
                                300,16,24)==0 && s.down && s.dragging);
@@ -279,11 +279,36 @@ static void test_timed_press_hold(void) {
     /* A stale or invalid held contact must release the button. */
     tps43_hold_cancel(&s,false);
     tps43_hold_step(&s,3000,1,true,false,1000,1000,0,16,24);
+    assert(tps43_hold_step(&s,3004,1,true,false,1030,1000,0,16,24)==TPS43_FORCE_PRESS);
     assert(s.down);
     assert(tps43_hold_step(&s,3008,2,true,false,1000,1000,0,16,24)==TPS43_FORCE_RELEASE);
     tps43_hold_cancel(&s,false);
     tps43_hold_step(&s,4000,1,true,false,1000,1000,0,16,24);
+    assert(tps43_hold_step(&s,4004,1,true,false,1030,1000,0,16,24)==TPS43_FORCE_PRESS);
     assert(tps43_hold_step(&s,4300,1,true,false,1000,1000,0,16,24)==TPS43_FORCE_RELEASE);
+}
+
+static void test_rest_then_force_double_click_with_hold_enabled(void) {
+    struct fixture f=fresh();
+    struct tps43_hold_state hold={0};
+    for (int i=0;i<125;i++) {
+        assert(sample(&f,1000)==0);
+        assert(tps43_hold_step(&hold,f.t,1,true,false,f.x,f.y,300,16,24)==0);
+    }
+    assert(hold.armed && !hold.down && f.s.ready);
+    int presses=0, releases=0;
+    for (int cycle=0;cycle<2;cycle++) {
+        for (int j=0;j<6;j++) {
+            uint16_t strength=j<3 ? 1300 : 1000;
+            assert(!hold.down); /* Driver must continue feeding force samples. */
+            int event=sample(&f,strength);
+            presses+=event==TPS43_FORCE_PRESS;
+            releases+=event==TPS43_FORCE_RELEASE;
+            bool busy=f.s.down || f.s.preparing || f.s.candidate || f.s.tap_consumed;
+            assert(tps43_hold_step(&hold,f.t,1,true,busy,f.x,f.y,300,16,24)==0);
+        }
+    }
+    assert(presses==2 && releases==2 && !f.s.down && !hold.down);
 }
 
 static void test_packed_pointer(void) {
@@ -360,6 +385,7 @@ int main(void) {
     test_software_taps();
     test_click_target_lock();
     test_timed_press_hold();
+    test_rest_then_force_double_click_with_hold_enabled();
     test_packed_pointer();
     test_drag_without_repeated_freezes();
     test_force_double_click();
