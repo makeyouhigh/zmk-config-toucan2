@@ -269,6 +269,10 @@ struct tps43_drv_data {
     struct k_sem lock;
     struct gpio_callback rdy_cb;
     struct k_work work;
+    struct k_work power_work;
+    struct k_work_q work_q;
+    K_THREAD_STACK_MEMBER(work_stack, 2048);
+    atomic_t requested_sleep;
     struct k_work_delayable force_watchdog;
     struct tps43_force_state force;
     int64_t force_display_report_ms;

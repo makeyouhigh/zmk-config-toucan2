@@ -19,10 +19,12 @@
 LOG_MODULE_REGISTER(tps43, CONFIG_INPUT_LOG_LEVEL);
 
 static int check_reset_and_reconfigure(const struct device *dev);
+static void tps43_force_communication(const struct device *dev);
+static void tps43_power_work(struct k_work *work);
 
 static void tps43_force_report(const struct device *dev, enum tps43_force_event event) {
     if (event != TPS43_FORCE_NONE) {
-        input_report_key(dev, INPUT_BTN_0, event == TPS43_FORCE_PRESS, true, K_FOREVER);
+        input_report_key(dev, INPUT_BTN_0, event == TPS43_FORCE_PRESS, true, K_MSEC(5));
         LOG_DBG("Force click %s", event == TPS43_FORCE_PRESS ? "down" : "up");
     }
 }
@@ -49,6 +51,10 @@ static void tps43_force_cancel_and_report(const struct device *dev) {
     struct tps43_drv_data *data = dev->data;
     k_work_cancel_delayable(&data->force_watchdog);
     tps43_force_report(dev, tps43_force_cancel(&data->force, true));
+    if (data->touching) {
+        data->touching = false;
+        input_report_key(dev, INPUT_BTN_TOUCH, 0, true, K_MSEC(5));
+    }
     tps43_force_display_report(dev, TOUCAN_TOUCH_NONE);
 }
 
@@ -56,9 +62,14 @@ static void tps43_force_watchdog(struct k_work *work) {
     struct tps43_drv_data *data = CONTAINER_OF(k_work_delayable_from_work(work),
                                               struct tps43_drv_data, force_watchdog);
     k_sem_take(&data->lock, K_FOREVER);
-    if (data->force.down) {
+    if (data->touching || data->force.down) {
         tps43_force_cancel_and_report(data->dev);
-        LOG_WRN("Force click released: no fresh sensor data");
+        LOG_WRN("Touch and force released: no fresh sensor data");
+        if (!data->suspended) {
+            tps43_force_communication(data->dev);
+            k_sleep(K_MSEC(1));
+            k_work_submit_to_queue(&data->work_q, &data->work);
+        }
     }
     k_sem_give(&data->lock);
 }
@@ -245,7 +256,7 @@ static int tps43_i2c_write_reg8(const struct device *dev, uint16_t reg, uint8_t 
      if (!drv_data->initialized || drv_data->suspended) {
          return;
      }
-     k_work_submit(&drv_data->work);
+     k_work_submit_to_queue(&drv_data->work_q, &drv_data->work);
  }
 
 
@@ -298,7 +309,7 @@ static int tps43_set_suspend_internal(const struct device *dev, bool suspend, bo
         tps43_force_cancel_and_report(dev);
         if (drv_data->touching) {
             drv_data->touching = false;
-            input_report_key(dev, INPUT_BTN_TOUCH, 0, true, K_FOREVER);
+            input_report_key(dev, INPUT_BTN_TOUCH, 0, true, K_MSEC(5));
         }
     }
 
@@ -403,23 +414,23 @@ static void tps43_handle_swipe(const struct device *dev, uint8_t num_fingers, in
 
     if (rel_x < 0) {
         LOG_INF("%d-finger swipe left - INPUT_BTN_WEST", num_fingers);
-        input_report_key(dev, INPUT_BTN_WEST, 1, true, K_FOREVER);
-        input_report_key(dev, INPUT_BTN_WEST, 0, true, K_FOREVER);
+        input_report_key(dev, INPUT_BTN_WEST, 1, true, K_MSEC(5));
+        input_report_key(dev, INPUT_BTN_WEST, 0, true, K_MSEC(5));
     }
     if (rel_x > 0) {
         LOG_INF("%d-finger swipe right - INPUT_BTN_EAST", num_fingers);
-        input_report_key(dev, INPUT_BTN_EAST, 1, true, K_FOREVER);
-        input_report_key(dev, INPUT_BTN_EAST, 0, true, K_FOREVER);
+        input_report_key(dev, INPUT_BTN_EAST, 1, true, K_MSEC(5));
+        input_report_key(dev, INPUT_BTN_EAST, 0, true, K_MSEC(5));
     }
     if (rel_y < 0) {
         LOG_INF("%d-finger swipe up - INPUT_BTN_NORTH", num_fingers);
-        input_report_key(dev, INPUT_BTN_NORTH, 1, true, K_FOREVER);
-        input_report_key(dev, INPUT_BTN_NORTH, 0, true, K_FOREVER);
+        input_report_key(dev, INPUT_BTN_NORTH, 1, true, K_MSEC(5));
+        input_report_key(dev, INPUT_BTN_NORTH, 0, true, K_MSEC(5));
     }
     if (rel_y > 0) {
         LOG_INF("%d-finger swipe down - INPUT_BTN_SOUTH", num_fingers);
-        input_report_key(dev, INPUT_BTN_SOUTH, 1, true, K_FOREVER);
-        input_report_key(dev, INPUT_BTN_SOUTH, 0, true, K_FOREVER);
+        input_report_key(dev, INPUT_BTN_SOUTH, 1, true, K_MSEC(5));
+        input_report_key(dev, INPUT_BTN_SOUTH, 0, true, K_MSEC(5));
     }
 }
 
@@ -495,7 +506,7 @@ static void tps43_work_handler(struct k_work *work) {
         tps43_force_cancel_and_report(dev);
         if (drv_data->touching) {
             drv_data->touching = false;
-            input_report_key(dev, INPUT_BTN_TOUCH, 0, true, K_FOREVER);
+            input_report_key(dev, INPUT_BTN_TOUCH, 0, true, K_MSEC(5));
         }
         ret = check_reset_and_reconfigure(dev);
         if (ret < 0) {
@@ -530,12 +541,14 @@ static void tps43_work_handler(struct k_work *work) {
         uint16_t y = sys_get_be16(&touch_data[TPS43_REG_ABS_Y - TPS43_REG_GESTURE_EVENTS_0]);
         bool valid = !(touch_data[3] & (TPS43_PALM_DETECT | TPS43_TOO_MANY_FINGERS)) &&
                      (num_fingers == 0 || area != 0);
+        is_touching = is_touching && valid;
         tps43_force_report(dev, tps43_force_step(&drv_data->force, &config->force,
                                                k_uptime_get(), num_fingers, strength, valid, x, y));
         tps43_force_display_report(dev, tps43_force_display_state(&drv_data->force,
                                                                  num_fingers, valid));
-        if (drv_data->force.down) {
-            k_work_reschedule(&drv_data->force_watchdog, K_MSEC(TPS43_FORCE_STALE_MS));
+        if (is_touching) {
+            k_work_reschedule_for_queue(&drv_data->work_q, &drv_data->force_watchdog,
+                                         K_MSEC(TPS43_FORCE_STALE_MS));
         } else {
             k_work_cancel_delayable(&drv_data->force_watchdog);
         }
@@ -547,18 +560,18 @@ static void tps43_work_handler(struct k_work *work) {
     if (is_touching != drv_data->touching) {
         drv_data->touching = is_touching;
         LOG_INF("Touch state changed: %s", is_touching ? "down" : "up");
-        input_report_key(dev, INPUT_BTN_TOUCH, is_touching ? 1 : 0, true, K_FOREVER);
+        input_report_key(dev, INPUT_BTN_TOUCH, is_touching ? 1 : 0, true, K_MSEC(5));
     }
 
     if (gestures_events[0] != 0 || gestures_events[1] != 0) {
 
-        LOG_INF("Gestures: Single=0x%02X, Multi=0x%02X", gestures_events[0], gestures_events[1]);
+        LOG_DBG("Gestures: Single=0x%02X, Multi=0x%02X", gestures_events[0], gestures_events[1]);
 
         if (config->single_tap && (gestures_events[0] & TPS43_SINGLE_TAP) &&
             (!config->force_click || !drv_data->force.tap_consumed)) {
             LOG_INF("Single tap → LEFT BUTTON");
-            input_report_key(dev, INPUT_BTN_0, 1, true, K_FOREVER);
-            input_report_key(dev, INPUT_BTN_0, 0, true, K_FOREVER);
+            input_report_key(dev, INPUT_BTN_0, 1, true, K_MSEC(5));
+            input_report_key(dev, INPUT_BTN_0, 0, true, K_MSEC(5));
         }
         if (gestures_events[0] & (TPS43_SWIPE_UP | TPS43_SWIPE_DOWN | TPS43_SWIPE_LEFT | TPS43_SWIPE_RIGHT)) {
             LOG_INF("Single finger swipe");
@@ -566,15 +579,15 @@ static void tps43_work_handler(struct k_work *work) {
         }
         if (gestures_events[1] & TPS43_TWO_FINGER_TAP) {
             LOG_INF("Two finger tap → RIGHT BUTTON");
-            input_report_key(dev, INPUT_BTN_1, 1, true, K_FOREVER);
-            input_report_key(dev, INPUT_BTN_1, 0, true, K_FOREVER);
+            input_report_key(dev, INPUT_BTN_1, 1, true, K_MSEC(5));
+            input_report_key(dev, INPUT_BTN_1, 0, true, K_MSEC(5));
         }
         if (!config->force_click && (gestures_events[0] & TPS43_PRESS_AND_HOLD) &&
             !is_drag_active) {
             LOG_INF("Press and hold detected - DRAG (HOLD LEFT BUTTON)");
             // set internal drag flag and press left mouse button
             is_drag_active = true;
-            input_report_key(dev, INPUT_BTN_0, 1, true, K_FOREVER);
+            input_report_key(dev, INPUT_BTN_0, 1, true, K_MSEC(5));
         }
         if (gestures_events[1] & TPS43_SCROLL) {
             // set scroll flag for processing in tp_movement block
@@ -591,7 +604,7 @@ static void tps43_work_handler(struct k_work *work) {
         LOG_INF("Press and hold end detected - RELEASE (RELEASE LEFT BUTTON)");
         // release drag flag and release left mouse button
         is_drag_active = false;
-        input_report_key(dev, INPUT_BTN_0, 0, true, K_FOREVER);   // release + sync
+        input_report_key(dev, INPUT_BTN_0, 0, true, K_MSEC(5));   // release + sync
     }
 
     if (rel_x != 0 || rel_y != 0) {
@@ -606,23 +619,23 @@ static void tps43_work_handler(struct k_work *work) {
                     rel_x = -rel_x;
                 }
                 int16_t wheel = (rel_x * config->scroll_sensitivity) / 100;
-                LOG_INF("Scrolling %d horizontally", wheel);
-                input_report_rel(dev, INPUT_REL_HWHEEL, wheel, true, K_FOREVER);
+                LOG_DBG("Scrolling %d horizontally", wheel);
+                input_report_rel(dev, INPUT_REL_HWHEEL, wheel, true, K_MSEC(5));
             } else {
                 // Vertical scroll
                 if (config->invert_scroll_y) {
                     rel_y = -rel_y;
                 }
                 int16_t wheel = (rel_y * config->scroll_sensitivity) / 100;
-                LOG_INF("Scrolling %d vertically", wheel);
-                input_report_rel(dev, INPUT_REL_WHEEL, wheel, true, K_FOREVER);
+                LOG_DBG("Scrolling %d vertically", wheel);
+                input_report_rel(dev, INPUT_REL_WHEEL, wheel, true, K_MSEC(5));
             }
             is_scroll_active = false;
         } else if (is_zoom_active) {
             // Zoom processing: the zoom amount comes in via rel_x
             int16_t zoom_delta = (rel_x * config->zoom_sensitivity) / 100;
-            LOG_INF("Zooming %d, rel_x=%d", zoom_delta, rel_x);
-            input_report_rel(dev, INPUT_REL_MISC, zoom_delta, true, K_FOREVER);
+            LOG_DBG("Zooming %d, rel_x=%d", zoom_delta, rel_x);
+            input_report_rel(dev, INPUT_REL_MISC, zoom_delta, true, K_MSEC(5));
             is_zoom_active = false;
         } else if (!config->force_click || (is_touching && !drv_data->force.suppress_motion)) {
             /* Drop squeeze/release displacement instead of replaying it later.
@@ -635,10 +648,14 @@ static void tps43_work_handler(struct k_work *work) {
                 int32_t scaled_y = ((int32_t)rel_y * config->sensitivity) / 100;
                 rel_y = (int16_t)CLAMP(scaled_y, INT16_MIN, INT16_MAX);
             }
-            LOG_INF("Sending movement: dx=%d, dy=%d", rel_x, rel_y);
+            LOG_DBG("Sending movement: dx=%d, dy=%d", rel_x, rel_y);
 
-            input_report_rel(dev, INPUT_REL_X, rel_x, false, K_FOREVER);
-            input_report_rel(dev, INPUT_REL_Y, rel_y, true, K_FOREVER);
+            if (rel_x != 0) {
+                input_report_rel(dev, INPUT_REL_X, rel_x, rel_y == 0, K_MSEC(5));
+            }
+            if (rel_y != 0) {
+                input_report_rel(dev, INPUT_REL_Y, rel_y, true, K_MSEC(5));
+            }
         }
     }
 
@@ -1476,7 +1493,11 @@ static int tps43_init(const struct device *dev) {
     /* These must exist before an RDY interrupt can queue work. */
     k_sem_init(&drv_data->lock, 1, 1);
     k_work_init(&drv_data->work, tps43_work_handler);
+    k_work_init(&drv_data->power_work, tps43_power_work);
     k_work_init_delayable(&drv_data->force_watchdog, tps43_force_watchdog);
+    /* Streaming and Bluetooth backpressure must not stall the system workqueue. */
+    k_work_queue_start(&drv_data->work_q, drv_data->work_stack,
+                        K_THREAD_STACK_SIZEOF(drv_data->work_stack), 5, NULL);
 
     LOG_INF("=== Azoteq tps43 driver for device %s ===", dev->name);
 
@@ -1545,7 +1566,7 @@ static int tps43_init(const struct device *dev) {
 
     /* Catch data that became ready before interrupt registration. */
     if (config->rdy_gpio.port && gpio_pin_get_dt(&config->rdy_gpio) > 0) {
-        k_work_submit(&drv_data->work);
+        k_work_submit_to_queue(&drv_data->work_q, &drv_data->work);
     }
 
     LOG_INF("TPS43 driver successfully initialized");
@@ -1666,9 +1687,20 @@ DT_INST_FOREACH_STATUS_OKAY(TPS43_INIT)
  * @param sleep true - enter sleep mode, false - wake up
  * @return 0 on success, negative error code on failure
  */
+static void tps43_power_work(struct k_work *work) {
+    struct tps43_drv_data *data = CONTAINER_OF(work, struct tps43_drv_data, power_work);
+    int ret = tps43_set_suspend(data->dev, atomic_get(&data->requested_sleep) != 0);
+    if (ret < 0) {
+        LOG_WRN("Deferred power state update failed: %d", ret);
+    }
+}
+
 int tps43_set_sleep(const struct device *dev, bool sleep) {
     if (dev == NULL) {
         return -EINVAL;
     }
-    return tps43_set_suspend(dev, sleep);
+    struct tps43_drv_data *data = dev->data;
+    atomic_set(&data->requested_sleep, sleep);
+    int ret = k_work_submit_to_queue(&data->work_q, &data->power_work);
+    return ret < 0 ? ret : 0;
 }

@@ -2,213 +2,165 @@
 #include <assert.h>
 #include <stdio.h>
 #include "../modules/azoteq/drivers/input/tps43_force.h"
+#include <toucan/touch_lease.h>
 
 static const struct tps43_force_config config = {
-    .press_delta = 40, .release_delta = 20,
-    .baseline_ms = 80, .debounce_ms = 32,
-    .press_percent = 12, .release_percent = 6,
-    .motion_threshold = 16, .drag_threshold = 64, .settle_ms = 120,
+    .press_delta = 40, .release_delta = 20, .press_percent = 12, .release_percent = 4,
+    .baseline_ms = 40, .debounce_ms = 16, .settle_ms = 64,
+    .motion_threshold = 3, .drag_threshold = 24,
 };
-
-static int sample(struct tps43_force_state *s, int64_t t, uint16_t strength,
-                  uint16_t x, uint16_t y) {
-    return tps43_force_step(s, &config, t, 1, strength, true, x, y);
+struct fixture { struct tps43_force_state s; int64_t t; uint16_t x, y; };
+static struct fixture fresh(void) { return (struct fixture){.x=1000, .y=1000}; }
+static int send_frame(struct fixture *f, uint8_t fingers, uint16_t strength, bool valid) {
+    f->t += 8;
+    return tps43_force_step(&f->s, &config, f->t, fingers, strength, valid, f->x, f->y);
+}
+static int sample(struct fixture *f, uint16_t strength) { return send_frame(f,1,strength,true); }
+static void rest(struct fixture *f, uint16_t strength) {
+    for (int i=0;i<32;i++) assert(sample(f,strength)==0);
+    assert(f->s.ready && !f->s.down);
+}
+static void press(struct fixture *f, uint16_t strength) {
+    assert(sample(f,strength)==0);
+    assert(sample(f,strength)==0);
+    assert(sample(f,strength)==TPS43_FORCE_PRESS);
+    assert(f->s.down && f->s.suppress_motion);
+}
+static void release(struct fixture *f, uint16_t strength) {
+    assert(sample(f,strength)==0);
+    assert(sample(f,strength)==0);
+    assert(sample(f,strength)==TPS43_FORCE_RELEASE);
 }
 
-static void rest(struct tps43_force_state *s, int64_t t, uint16_t strength) {
-    for (int i = 0; i <= 120; i += 8) {
-        assert(sample(s, t + i, strength, 1000, 1000) == TPS43_FORCE_NONE);
+static void test_rest_noise_and_taps(void) {
+    struct fixture f=fresh();
+    for (int i=0;i<12;i++) assert(sample(&f,(uint16_t)(200+i*80))==0);
+    rest(&f,1000);
+    for (int i=0;i<7500;i++) assert(sample(&f,1000)==0);
+    assert(sample(&f,1300)==0);
+    assert(sample(&f,1000)==0);
+    assert(!f.s.down && !f.s.suppress_motion);
+    press(&f,1300);
+    assert(send_frame(&f,0,0,true)==-1 && f.s.tap_consumed);
+
+    /* Restore ordinary quick taps, including two successive contacts. */
+    for (int i=0;i<2;i++) {
+        assert(sample(&f,1000)==0);
+        assert(!f.s.tap_consumed);
+        assert(send_frame(&f,0,0,true)==0);
+        assert(!f.s.tap_consumed);
     }
-    assert(s->ready && !s->down);
-    assert(tps43_force_display_state(s, 1, true) == TOUCAN_TOUCH_CONTACT);
 }
 
-static void press(struct tps43_force_state *s, int64_t t, uint16_t strength) {
-    for (int i = 0; i < 32; i += 8) {
-        assert(sample(s, t + i, strength, 1000, 1000) == TPS43_FORCE_NONE);
-        assert(s->suppress_motion);
+static void test_movement_order_and_reposition(void) {
+    struct fixture f=fresh(); rest(&f,1000);
+    f.x += 4; assert(sample(&f,1000)==0); /* Movement precedes rising strength. */
+    for (int i=0;i<40;i++) {
+        f.x += 4;
+        assert(sample(&f,(uint16_t)(1300+i*10))==0);
+        assert(!f.s.down && !f.s.suppress_motion);
     }
-    assert(sample(s, t + 32, strength, 1000, 1000) == TPS43_FORCE_PRESS);
-    assert(s->down && s->tap_consumed && s->suppress_motion);
-    assert(tps43_force_display_state(s, 1, true) == TOUCAN_TOUCH_PRESSED);
+    rest(&f,1700);
+    /* A squeeze now works at the new position, allowing centroid displacement. */
+    f.x += 30; assert(sample(&f,2100)==0);
+    f.x += 20; assert(sample(&f,2100)==0);
+    f.x += 10; assert(sample(&f,2100)==TPS43_FORCE_PRESS);
+    assert(f.s.suppress_motion);
+
+    f=fresh(); rest(&f,1000);
+    /* A gradual squeeze deforms the finger before reaching the full threshold. */
+    f.x+=12; assert(sample(&f,1040)==0);
+    f.x+=12; assert(sample(&f,1080)==0);
+    f.x+=12; assert(sample(&f,1140)==0);
+    f.x+=12; assert(sample(&f,1180)==0);
+    f.x+=12; assert(sample(&f,1220)==TPS43_FORCE_PRESS);
+
+    f=fresh(); rest(&f,1000);
+    for (int i=0;i<20;i++) {
+        f.x += 60;
+        assert(sample(&f,1400)==0); /* Fast travel also cancels a nascent candidate. */
+    }
+    assert(!f.s.down);
 }
 
-static void test_rest_landing_noise(void) {
-    struct tps43_force_state s = {0};
-    /* A gradual landing must not click against an artificially low baseline. */
-    for (int t = 0; t <= 80; t += 8) {
-        assert(sample(&s, t, (uint16_t)(200 + t * 10), 1000, 1000) == 0);
+static void test_drag_without_repeated_freezes(void) {
+    struct fixture f=fresh(); rest(&f,1000); press(&f,1300);
+    f.x += 10; assert(sample(&f,1300)==0 && f.s.suppress_motion);
+    f.x += 20; assert(sample(&f,1300)==0 && !f.s.suppress_motion);
+    /* Reproduce the old stutter: pressure repeatedly crosses the release line. */
+    for (int i=0;i<30;i++) {
+        f.x += 8; assert(sample(&f,1020)==0);
+        assert(f.s.down && !f.s.suppress_motion);
+        f.x += 8; assert(sample(&f,1300)==0);
+        assert(f.s.down && !f.s.suppress_motion);
     }
-    for (int t = 88; t <= 160; t += 8) {
-        assert(sample(&s, t, 1000, 1000, 1000) == 0);
-    }
-    assert(s.ready && s.baseline == 1000 && !s.down);
-    for (int t = 168; t < 60000; t += 8) {
-        assert(sample(&s, t, 1000, 1000, 1000) == 0);
-        assert(!s.suppress_motion);
-    }
-    assert(sample(&s, 60000, 1300, 1002, 1001) == 0);
-    assert(s.suppress_motion);
-    assert(sample(&s, 60008, 1000, 1002, 1001) == 0);
-    assert(!s.down && !s.suppress_motion); /* A spike cannot leave motion frozen. */
-    press(&s, 60016, 1300);
+    release(&f,1000);
+    assert(!f.s.suppress_motion);
+    f.x += 8; assert(sample(&f,1000)==0 && !f.s.suppress_motion);
 }
 
-static void test_motion_then_press(void) {
-    struct tps43_force_state s = {0};
-    rest(&s, 0, 1000);
-    /* Travel with large contact-strength changes must not trigger a click. */
-    for (int t = 128, x = 1060; t <= 288; t += 8, x += 60) {
-        assert(sample(&s, t, (uint16_t)(1500 + t), (uint16_t)x, 1000) == 0);
-        assert(!s.down && !s.suppress_motion);
-    }
-    rest(&s, 296, 2000);
-    press(&s, 424, 2400);
-    assert(sample(&s, 464, 2400, 1200, 1000) == 0);
-    assert(s.down && s.dragging && !s.suppress_motion && s.baseline == 2000);
+static void test_force_double_click(void) {
+    struct fixture f=fresh(); rest(&f,1000);
+    int64_t start=f.t;
+    press(&f,1300); release(&f,1000);
+    assert(f.s.ready); /* No 80 ms recalibration between clicks. */
+    press(&f,1300); release(&f,1000);
+    assert(f.t-start==96 && !f.s.down);
+    assert(send_frame(&f,0,0,true)==0 && f.s.tap_consumed);
 }
 
-static void test_relaxation_and_scaling(void) {
-    struct tps43_force_state s = {0};
-    rest(&s, 0, 3000);
-    /* Relax a firm initial contact without lifting, then squeeze from rest. */
-    for (int t = 128; t <= 928; t += 8) {
-        assert(sample(&s, t, 1000, 1000, 1000) == 0);
-    }
-    assert(s.baseline >= 1000 && s.baseline < 1005);
-    press(&s, 936, 1250);
-    assert(tps43_force_threshold(1000, 40, 12) == 120);
-    assert(tps43_force_threshold(200, 40, 12) == 40);
-    assert(tps43_force_threshold(65535, 40, 12) == 7865);
-
-    s = (struct tps43_force_state){0};
-    rest(&s, 0, 200);
-    press(&s, 128, 260);
-    s = (struct tps43_force_state){0};
-    rest(&s, 0, 4000);
-    assert(sample(&s, 128, 4300, 1000, 1000) == 0);
-    assert(!s.candidate); /* Raw minimum alone is insufficient at high strength. */
-    press(&s, 136, 4700);
+static void test_strength_and_safety(void) {
+    struct fixture f=fresh(); rest(&f,3000);
+    for (int i=0;i<120;i++) assert(sample(&f,1000)==0);
+    assert(f.s.baseline<1005); press(&f,1300);
+    assert(send_frame(&f,2,2000,true)==-1);
+    for (int i=0;i<20;i++) assert(sample(&f,4000)==0);
+    assert(f.s.blocked);
+    send_frame(&f,0,0,true); rest(&f,1000); press(&f,1300);
+    assert(send_frame(&f,1,1300,false)==-1);
+    send_frame(&f,0,0,true); rest(&f,1000); press(&f,1300);
+    f.t+=TPS43_FORCE_STALE_MS;
+    assert(sample(&f,1300)==-1 && f.s.blocked);
+    send_frame(&f,0,0,true); rest(&f,1000); press(&f,1300);
+    assert(tps43_force_cancel(&f.s,true)==-1);
+    assert(tps43_force_cancel(&f.s,true)==0);
+    f=fresh(); rest(&f,65000);
+    for (int i=0;i<10;i++) assert(sample(&f,65535)==0);
+    assert(sample(&f,1)==0 && !f.s.down);
+    assert(tps43_force_moved(0,0,65535,65535,24));
+    assert(tps43_force_display_state(&f.s,0,true)==TOUCAN_TOUCH_NONE);
 }
 
-static void test_slow_move_before_strength_change(void) {
-    struct tps43_force_state s = {0};
-    rest(&s, 0, 1000);
-    /* Movement begins first. A subsequent strength increase must not drag. */
-    assert(sample(&s, 128, 1000, 1004, 1000) == 0);
-    for (int t = 136, x = 1008; t <= 456; t += 8, x += 4) {
-        assert(sample(&s, t, 1400, (uint16_t)x, 1000) == 0);
-        assert(!s.down && !s.dragging);
-    }
-    /* After stopping, the elevated moving strength becomes the new rest. */
-    for (int t = 464; t <= 584; t += 8) {
-        assert(sample(&s, t, 1400, 1168, 1000) == 0);
-        assert(!s.down);
-    }
-    assert(s.ready && s.baseline == 1400);
-    for (int t = 592; t < 624; t += 8) {
-        assert(sample(&s, t, 1700, 1168, 1000) == 0);
-    }
-    assert(sample(&s, 624, 1700, 1168, 1000) == TPS43_FORCE_PRESS);
-    assert(sample(&s, 632, 1700, 1250, 1000) == 0);
-    assert(s.dragging && !s.suppress_motion);
-}
-
-static void test_click_jitter_and_drag(void) {
-    struct tps43_force_state s = {0};
-    rest(&s, 0, 1000);
-    /* Micro motion throughout the press decision is discarded. */
-    for (int t = 128, x = 1002; t < 160; t += 8, x += 2) {
-        assert(sample(&s, t, 1300, (uint16_t)x, 1000) == 0);
-        assert(s.suppress_motion && !s.down);
-    }
-    assert(sample(&s, 160, 1300, 1010, 1000) == TPS43_FORCE_PRESS);
-    assert(s.suppress_motion && !s.dragging);
-    for (int t = 168; t <= 248; t += 8) {
-        assert(sample(&s, t, 1300, 1018, 1010) == 0);
-        assert(s.down && s.suppress_motion && !s.dragging);
-    }
-    assert(sample(&s, 256, 1300, 1066, 1000) == 0);
-    assert(s.suppress_motion); /* Exactly at the dead-zone edge. */
-    assert(sample(&s, 264, 1300, 1067, 1000) == 0);
-    assert(s.dragging && !s.suppress_motion);
-    assert(sample(&s, 272, 1300, 1002, 1000) == 0);
-    assert(!s.suppress_motion); /* Returning to the anchor cannot re-lock a drag. */
-    assert(sample(&s, 280, 1090, 1002, 1000) == 0);
-    assert(s.down); /* Hysteresis maintains button down. */
-    assert(sample(&s, 288, 1030, 1002, 1000) == 0);
-    assert(s.suppress_motion);
-    assert(sample(&s, 296, 1090, 1002, 1000) == 0);
-    assert(s.down && !s.suppress_motion); /* Ignore a transient release. */
-    for (int t = 304; t < 336; t += 8) {
-        assert(sample(&s, t, 1000, 1002, 1000) == 0);
-        assert(s.suppress_motion);
-    }
-    assert(sample(&s, 336, 1000, 1002, 1000) == TPS43_FORCE_RELEASE);
-    assert(!s.down && s.suppress_motion);
-    assert(sample(&s, 344, 1000, 1003, 1000) == 0);
-    assert(s.suppress_motion);
-    for (int t = 352; t <= 416; t += 8) {
-        assert(sample(&s, t, 1000, 1003, 1000) == 0);
-    }
-    assert(s.ready && !s.suppress_motion);
-    press(&s, 424, 1300); /* Another squeeze without lifting. */
-}
-
-static void test_safety(void) {
-    struct tps43_force_state s = {0};
-    rest(&s, 0, 1000);
-    press(&s, 128, 1300);
-    assert(tps43_force_step(&s, &config, 168, 0, 0, true, 0, 0) == -1);
-    assert(s.tap_consumed && s.suppress_motion);
-    assert(tps43_force_display_state(&s, 0, true) == TOUCAN_TOUCH_NONE);
-    rest(&s, 176, 1000);
-    press(&s, 304, 1300);
-    assert(tps43_force_step(&s, &config, 344, 2, 4000, true, 1000, 1000) == -1);
-    for (int t = 352; t < 552; t += 8) {
-        assert(sample(&s, t, 6000, 1000, 1000) == 0);
-    }
-    assert(s.blocked && !s.down);
-    assert(tps43_force_display_state(&s, 2, true) == TOUCAN_TOUCH_CONTACT);
-    assert(tps43_force_step(&s, &config, 552, 0, 0, true, 0, 0) == 0);
-    rest(&s, 560, 1000);
-    press(&s, 688, 1300);
-    assert(tps43_force_step(&s, &config, 728, 1, 1300, false, 1000, 1000) == -1);
-    assert(s.blocked);
-    tps43_force_step(&s, &config, 736, 0, 0, true, 0, 0);
-    rest(&s, 744, 1000);
-    press(&s, 872, 1300);
-    assert(tps43_force_cancel(&s, true) == -1); /* I2C error / sleep / watchdog. */
-    assert(tps43_force_cancel(&s, true) == 0);
-    tps43_force_step(&s, &config, 912, 0, 0, true, 0, 0);
-    rest(&s, 920, 1000);
-    press(&s, 1048, 1300);
-    assert(sample(&s, 1400, 1300, 1000, 1000) == -1);
-    assert(s.blocked);
-}
-
-static void test_boundaries(void) {
-    struct tps43_force_state s = {0};
-    rest(&s, 0, 65000);
-    for (int t = 128; t <= 168; t += 8) {
-        assert(sample(&s, t, 65535, 1000, 1000) == 0);
-    }
-    assert(!s.down); /* Saturation cannot satisfy a percentage increase. */
-    assert(sample(&s, 176, 1, 1000, 1000) == 0); /* No unsigned underflow. */
-    assert(tps43_force_display_state(&s, 1, false) == TOUCAN_TOUCH_NONE);
-    assert(tps43_force_moved(0, 0, 65535, 65535, 40));
-    assert(tps43_force_moved(65535, 65535, 0, 0, 40));
-    assert(!tps43_force_moved(1000, 1040, 1000, 1000, 40));
+static void test_lost_touch_release_and_heartbeat(void) {
+    struct toucan_touch_lease l={0};
+    toucan_touch_lease_update(&l,100,TOUCAN_TOUCH_CONTACT);
+    assert(!toucan_touch_lease_expire(&l,849,750));
+    /* A lost lift report or dead sensor must not leave TP on indefinitely. */
+    assert(toucan_touch_lease_expire(&l,850,750));
+    assert(l.state==TOUCAN_TOUCH_NONE);
+    toucan_touch_lease_update(&l,900,TOUCAN_TOUCH_CONTACT);
+    toucan_touch_lease_update(&l,1150,TOUCAN_TOUCH_CONTACT);
+    assert(!toucan_touch_lease_expire(&l,1700,750));
+    toucan_touch_lease_button(&l,1708,true);
+    toucan_touch_lease_update(&l,1716,TOUCAN_TOUCH_PRESSED);
+    /* Button-up lost in transport, but the following state snapshot survives. */
+    toucan_touch_lease_update(&l,1800,TOUCAN_TOUCH_CONTACT);
+    assert(l.release_pending);
+    toucan_touch_lease_button(&l,1808,false);
+    assert(!l.release_pending);
+    toucan_touch_lease_button(&l,1900,true);
+    assert(toucan_touch_lease_expire(&l,2650,750) && l.release_pending);
+    toucan_touch_lease_button(&l,2658,false);
+    assert(!l.left_down && !l.release_pending);
 }
 
 int main(void) {
-    test_rest_landing_noise();
-    test_motion_then_press();
-    test_slow_move_before_strength_change();
-    test_relaxation_and_scaling();
-    test_click_jitter_and_drag();
-    test_safety();
-    test_boundaries();
-    puts("Force-click behavioural tests passed");
+    test_rest_noise_and_taps();
+    test_movement_order_and_reposition();
+    test_drag_without_repeated_freezes();
+    test_force_double_click();
+    test_strength_and_safety();
+    test_lost_touch_release_and_heartbeat();
+    puts("Force click, drag, double click and touch-release recovery tests passed");
     return 0;
 }

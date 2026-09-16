@@ -1,0 +1,13 @@
+description: Recover the automatic touch layer when touch or split reports stop
+compatible: "toucan,touch-guard"
+include: base.yaml
+properties:
+  device:
+    type: phandle
+    required: true
+  layer:
+    type: int
+    required: true
+  timeout-ms:
+    type: int
+    default: 750

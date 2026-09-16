@@ -1,2 +1,3 @@
 zephyr_include_directories(include)
 add_subdirectory(drivers)
+target_sources_ifdef(CONFIG_ZMK_SPLIT_ROLE_CENTRAL app PRIVATE src/toucan_touch_guard.c)

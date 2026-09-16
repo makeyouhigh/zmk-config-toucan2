@@ -32,44 +32,44 @@ properties:
 
   force-click-release-threshold-percent:
     type: int
-    default: 6
+    default: 4
     description: |
       Release threshold as a percentage of the resting strength (0 to 100).
       Must not exceed the press percentage. The absolute minimum still applies.
 
   force-click-baseline-ms:
     type: int
-    default: 80
+    default: 40
     description: |
       Stable contact averaging interval in milliseconds (0 to 1000).
-      Movement and unstable landing restart calibration. At least four samples
+      Unstable landing restarts calibration. At least four samples
       are required; no click is emitted during calibration.
 
   force-click-debounce-ms:
     type: int
-    default: 32
+    default: 16
     description: |
       Required continuous duration above/below the press/release thresholds
       in milliseconds (0 to 1000). Invalid input releases immediately.
 
   force-click-settle-ms:
     type: int
-    default: 120
+    default: 64
     description: Minimum age of a new contact before arming a click, in milliseconds (0 to 1000).
 
   force-click-motion-threshold:
     type: int
-    default: 16
+    default: 3
     description: |
-      Displacement along either absolute sensor axis that restarts resting
-      calibration before a click. Uses sensor coordinate units, not screen pixels.
-      Does not block movement after a drag has started. Must be positive.
+      Recent movement tolerance in sensor units. Travel that starts before a
+      squeeze blocks new clicks until 48 ms after movement settles. A squeeze
+      candidate allows centroid displacement; this is not a touch-down anchor.
 
   force-click-drag-threshold:
     type: int
-    default: 64
+    default: 24
     description: |
-      Displacement along either absolute sensor axis from the press candidate
+      Displacement along either absolute sensor axis from the confirmed press
       position required to start dragging. Smaller movements are discarded.
       Uses sensor coordinate units, not screen pixels. Must be at least the
       motion threshold and no more than 65535.

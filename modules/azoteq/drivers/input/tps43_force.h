@@ -40,6 +40,8 @@ struct tps43_force_state {
     int64_t last_sample_ms;
     int64_t candidate_ms;
     int64_t quiet_until_ms;
+    int64_t motion_until_ms;
+    int64_t motion_window_ms;
     uint64_t strength_sum;
     uint32_t samples;
     uint16_t baseline;
@@ -52,6 +54,10 @@ struct tps43_force_state {
     uint16_t candidate_y;
     uint16_t drag_x;
     uint16_t drag_y;
+    uint16_t previous_x;
+    uint16_t previous_y;
+    uint16_t motion_x;
+    uint16_t motion_y;
 };
 
 static inline enum tps43_force_event
@@ -72,11 +78,11 @@ static inline uint32_t tps43_force_threshold(uint16_t baseline, uint16_t minimum
 }
 
 static inline bool tps43_force_moved(uint16_t x, uint16_t y, uint16_t anchor_x,
-                                     uint16_t anchor_y, uint16_t threshold) {
+                                     uint16_t anchor_y, uint32_t threshold) {
     int32_t dx = (int32_t)x - anchor_x;
     int32_t dy = (int32_t)y - anchor_y;
-    return dx > threshold || dx < -(int32_t)threshold ||
-           dy > threshold || dy < -(int32_t)threshold;
+    return dx > (int32_t)threshold || dx < -(int32_t)threshold ||
+           dy > (int32_t)threshold || dy < -(int32_t)threshold;
 }
 
 static inline enum toucan_touch_display_state
@@ -130,20 +136,32 @@ tps43_force_step(struct tps43_force_state *state,
         state->active = true;
         state->tap_consumed = false;
         state->started_ms = now_ms;
+        state->motion_window_ms = now_ms;
+        state->previous_x = state->motion_x = x;
+        state->previous_y = state->motion_y = y;
         tps43_force_window(state, now_ms, strength, x, y);
         return TPS43_FORCE_NONE;
     }
 
-    /* Absolute coordinates also see motion hidden by the chip's tap recognizer.
-     * Never start a new force click while repositioning. A held drag bypasses
-     * this gate and keeps the pressure baseline it had at button-down. */
-    if (!state->down && tps43_force_moved(x, y, state->anchor_x, state->anchor_y,
-                                         config->motion_threshold)) {
-        tps43_force_window(state, now_ms, strength, x, y);
-        state->tap_consumed = true;
-        return TPS43_FORCE_NONE;
+    /* Detect recent travel, not distance from the original touch-down point.
+     * A squeeze may move its centroid: once a stationary squeeze is a candidate,
+     * position changes must not discard it and absorb its force into baseline. */
+    bool was_moving = now_ms < state->motion_until_ms;
+    bool moving = tps43_force_moved(x, y, state->previous_x, state->previous_y,
+                                     config->motion_threshold) ||
+                  tps43_force_moved(x, y, state->motion_x, state->motion_y,
+                                     config->motion_threshold);
+    state->previous_x = x;
+    state->previous_y = y;
+    if (now_ms - state->motion_window_ms >= 24) {
+        state->motion_window_ms = now_ms;
+        state->motion_x = x;
+        state->motion_y = y;
     }
     if (!state->ready) {
+        if (moving) {
+            state->motion_until_ms = now_ms + 48;
+        }
         uint16_t low = strength < state->strength_min ? strength : state->strength_min;
         uint16_t high = strength > state->strength_max ? strength : state->strength_max;
         uint32_t tolerance = tps43_force_threshold(state->baseline, 16, 3);
@@ -169,13 +187,37 @@ tps43_force_step(struct tps43_force_state *state,
                                                      config->press_percent);
     uint32_t release_threshold = tps43_force_threshold(state->baseline, config->release_delta,
                                                        config->release_percent);
+
+    if (!state->down && state->candidate &&
+        tps43_force_moved(x, y, state->candidate_x, state->candidate_y,
+                          (uint32_t)config->drag_threshold * 3U)) {
+        /* A large ongoing swipe is not a squeeze; allow normal centroid
+         * deformation during confirmation instead of the old tiny anchor gate. */
+        state->candidate = false;
+        state->motion_until_ms = now_ms + 48;
+        state->baseline = strength;
+        state->baseline_q8 = (int32_t)strength * 256;
+        return TPS43_FORCE_NONE;
+    }
+
+    if (!state->down && !state->candidate &&
+        (was_moving || (moving && delta < (int32_t)(press_threshold / 3U)))) {
+        /* Travel that began before pressure rose cannot become a drag. The
+         * local resting level follows travel; a short pause arms the next squeeze. */
+        state->baseline = strength;
+        state->baseline_q8 = (int32_t)strength * 256;
+        if (moving) {
+            state->motion_until_ms = now_ms + 48;
+        }
+        return TPS43_FORCE_NONE;
+    }
     bool next_down = state->down ? delta > (int32_t)release_threshold
                                  : delta >= (int32_t)press_threshold;
 
     /* Click deformation is not a drag. Start dragging only after deliberate
      * displacement, and never reapply this dead zone once a drag has started. */
     if (state->down) {
-        if (!state->dragging && tps43_force_moved(x, y, state->drag_x, state->drag_y,
+        if (next_down && !state->dragging && tps43_force_moved(x, y, state->drag_x, state->drag_y,
                                                  config->drag_threshold)) {
             state->dragging = true;
         }
@@ -201,7 +243,7 @@ tps43_force_step(struct tps43_force_state *state,
         state->candidate_y = y;
     }
     /* Do not emit cursor displacement during the force decision itself. */
-    state->suppress_motion = true;
+    state->suppress_motion = !state->down || !state->dragging;
     if (now_ms - state->candidate_ms < config->debounce_ms) {
         return TPS43_FORCE_NONE;
     }
@@ -210,13 +252,18 @@ tps43_force_step(struct tps43_force_state *state,
     if (next_down) {
         state->tap_consumed = true;
         state->dragging = false;
-        state->drag_x = state->candidate_x;
-        state->drag_y = state->candidate_y;
+        state->drag_x = x;
+        state->drag_y = y;
     } else {
-        /* Release deformation must not move the pointer or immediately rearm. */
+        /* Keep the resting baseline and ready state for a second squeeze.
+         * A drag stays fluid while release is debounced; only stationary click
+         * deformation needs the small release guard. */
+        state->quiet_until_ms = now_ms + (state->dragging ? 0 : config->debounce_ms);
         state->dragging = false;
-        state->quiet_until_ms = now_ms + config->debounce_ms;
-        tps43_force_window(state, now_ms, strength, x, y);
+        state->motion_until_ms = now_ms;
+        state->motion_window_ms = now_ms;
+        state->motion_x = x;
+        state->motion_y = y;
     }
     return next_down ? TPS43_FORCE_PRESS : TPS43_FORCE_RELEASE;
 }

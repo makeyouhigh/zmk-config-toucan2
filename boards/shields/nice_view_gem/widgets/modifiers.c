@@ -7,14 +7,14 @@
 #include "status_icons.h"
 #include "util.h"
 
-#define MOD_AREA_X 12
-#define MOD_AREA_Y 78
-#define MOD_AREA_WIDTH 120
-#define MOD_AREA_HEIGHT 24
-#define MOD_ICON_SIZE 16
-#define MOD_ICON_GAP 4
-#define TOUCH_ICON_SIZE 24
-#define TOUCH_ICON_X 104
+#define MOD_AREA_X 4
+#define MOD_AREA_Y 64
+#define MOD_AREA_WIDTH 136
+#define MOD_AREA_HEIGHT 32
+#define MOD_ICON_SIZE 24
+#define MOD_ICON_GAP 2
+#define TOUCH_ICON_SIZE 32
+#define TOUCH_ICON_X 108
 
 uint8_t modifiers_normalize(uint8_t hid_modifiers) {
     uint8_t result = 0;
@@ -42,9 +42,17 @@ static void draw_icon(lv_obj_t *canvas, int x, int y, const uint32_t rows[],
             if (!(rows[py] & BIT(px))) {
                 continue;
             }
-            bool interior = px > 0 && px + 1 < size && py > 0 && py + 1 < size &&
-                            (rows[py] & BIT(px - 1)) && (rows[py] & BIT(px + 1)) &&
-                            (rows[py - 1] & BIT(px)) && (rows[py + 1] & BIT(px));
+            bool interior = true;
+            for (int dy = -2; dy <= 2 && interior; dy++) {
+                for (int dx = -2; dx <= 2; dx++) {
+                    int nx = px + dx, ny = py + dy;
+                    if (nx < 0 || nx >= size || ny < 0 || ny >= size ||
+                        !(rows[ny] & BIT(nx))) {
+                        interior = false;
+                        break;
+                    }
+                }
+            }
             if (filled || !interior) {
                 lv_canvas_set_px_color(canvas, x + px, y + py, LVGL_FOREGROUND);
             }
@@ -70,7 +78,7 @@ void draw_modifiers_status(lv_obj_t *canvas, uint8_t modifiers, uint8_t touch_st
     }
 
     draw_icon(canvas, TOUCH_ICON_X, MOD_AREA_Y, touch_hand_icon, TOUCH_ICON_SIZE,
-              touch_state != TOUCAN_TOUCH_NONE);
+              touch_state == TOUCAN_TOUCH_CONTACT);
     if (touch_state == TOUCAN_TOUCH_PRESSED) {
         draw_icon(canvas, TOUCH_ICON_X, MOD_AREA_Y, touch_halo_icon, TOUCH_ICON_SIZE, true);
     }

@@ -74,12 +74,12 @@
         force-click-threshold = <40>;
         force-click-release-threshold = <20>;
         force-click-threshold-percent = <12>;
-        force-click-release-threshold-percent = <6>;
-        force-click-baseline-ms = <80>;
-        force-click-debounce-ms = <32>;
-        force-click-settle-ms = <120>;
-        force-click-motion-threshold = <16>;
-        force-click-drag-threshold = <64>;
+        force-click-release-threshold-percent = <4>;
+        force-click-baseline-ms = <40>;
+        force-click-debounce-ms = <16>;
+        force-click-settle-ms = <64>;
+        force-click-motion-threshold = <3>;
+        force-click-drag-threshold = <24>;
         report-rate-active = <8>;
         report-rate-idle-touch = <8>;
         timeout-idle-touch = <255>;
@@ -87,7 +87,7 @@
         //zoom;
         scroll;
         two-finger-tap;
-        // 한 손가락 좌클릭은 포스터치로만 처리합니다.
+        single-tap;
         // 시간 기반 길게 누르기는 포스터치로 대체합니다.
         //swipes;
         //three-finger-swipe;
