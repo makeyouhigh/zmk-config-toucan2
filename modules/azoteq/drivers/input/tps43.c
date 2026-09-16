@@ -49,6 +49,7 @@ static void tps43_force_display_report(const struct device *dev, uint8_t value) 
 /* Caller holds the driver lock. Release even when the I2C bus is unavailable. */
 static void tps43_force_cancel_and_report(const struct device *dev) {
     struct tps43_drv_data *data = dev->data;
+    tps43_tap_cancel(&data->tap);
     k_work_cancel_delayable(&data->force_watchdog);
     tps43_force_report(dev, tps43_force_cancel(&data->force, true));
     if (data->touching) {
@@ -454,6 +455,8 @@ static void tps43_work_handler(struct k_work *work) {
     bool is_scroll_active = false;
     bool is_zoom_active = false;
     bool is_drag_active = drv_data->drag_active;
+    bool communication_closed = false;
+    bool software_tap = false;
     int ret;
 
     // If device is in suspend, ignore interrupt (RDY should be disabled)
@@ -516,6 +519,7 @@ static void tps43_work_handler(struct k_work *work) {
     }
 
     const uint8_t gestures_events[2] = {touch_data[0], touch_data[1]};
+    int64_t sample_ms = k_uptime_get();
     uint8_t num_fingers = touch_data[4];
     int16_t rel_x = (int16_t)((touch_data[5] << 8) | touch_data[6]);
     int16_t rel_y = (int16_t)((touch_data[7] << 8) | touch_data[8]);
@@ -534,6 +538,13 @@ static void tps43_work_handler(struct k_work *work) {
             }
             drv_data->force_streaming = is_touching;
         }
+    }
+
+    /* All sensor reads/writes for this frame are done. Let the next sensing
+     * cycle start before input callbacks or Bluetooth queues can block us. */
+    tps43_end_communication_window(dev);
+    communication_closed = true;
+    if (config->force_click) {
         uint16_t strength = sys_get_be16(&touch_data[TPS43_REG_TOUCH_STRENGTH -
                                                     TPS43_REG_GESTURE_EVENTS_0]);
         uint8_t area = touch_data[TPS43_REG_TOUCH_AREA - TPS43_REG_GESTURE_EVENTS_0];
@@ -543,7 +554,13 @@ static void tps43_work_handler(struct k_work *work) {
                      (num_fingers == 0 || area != 0);
         is_touching = is_touching && valid;
         tps43_force_report(dev, tps43_force_step(&drv_data->force, &config->force,
-                                               k_uptime_get(), num_fingers, strength, valid, x, y));
+                                               sample_ms, num_fingers, strength, valid, x, y));
+        if (config->single_tap) {
+            software_tap = tps43_tap_step(&drv_data->tap, sample_ms, num_fingers,
+                                           valid, drv_data->force.tap_consumed, x, y,
+                                           config->tap_time >= 0 ? config->tap_time : 200,
+                                           config->tap_distance >= 0 ? config->tap_distance : 16);
+        }
         tps43_force_display_report(dev, tps43_force_display_state(&drv_data->force,
                                                                  num_fingers, valid));
         if (is_touching) {
@@ -563,12 +580,17 @@ static void tps43_work_handler(struct k_work *work) {
         input_report_key(dev, INPUT_BTN_TOUCH, is_touching ? 1 : 0, true, K_MSEC(5));
     }
 
+    if (software_tap) {
+        input_report_key(dev, INPUT_BTN_0, 1, true, K_MSEC(5));
+        input_report_key(dev, INPUT_BTN_0, 0, true, K_MSEC(5));
+    }
+
     if (gestures_events[0] != 0 || gestures_events[1] != 0) {
 
         LOG_DBG("Gestures: Single=0x%02X, Multi=0x%02X", gestures_events[0], gestures_events[1]);
 
-        if (config->single_tap && (gestures_events[0] & TPS43_SINGLE_TAP) &&
-            (!config->force_click || !drv_data->force.tap_consumed)) {
+        if (config->single_tap && !config->force_click &&
+            (gestures_events[0] & TPS43_SINGLE_TAP)) {
             LOG_INF("Single tap → LEFT BUTTON");
             input_report_key(dev, INPUT_BTN_0, 1, true, K_MSEC(5));
             input_report_key(dev, INPUT_BTN_0, 0, true, K_MSEC(5));
@@ -662,7 +684,9 @@ static void tps43_work_handler(struct k_work *work) {
 done:
     // Save for next call
     drv_data->drag_active = is_drag_active;
-    tps43_end_communication_window(dev);
+    if (!communication_closed) {
+        tps43_end_communication_window(dev);
+    }
 
     // Release semaphore after completing all I2C operations
     k_sem_give(&drv_data->lock);
@@ -739,7 +763,9 @@ static int tps43_configure_device(const struct device *dev) {
     // enable single gestures at hardware level
     {
         uint8_t single_gestures = 0;
-        single_gestures |= config->single_tap ? TPS43_SINGLE_TAP : 0;
+        /* Force mode recognizes ordinary taps in software, keeping hardware
+         * relative XY as responsive as when SINGLE_TAP was disabled. */
+        single_gestures |= config->single_tap && !config->force_click ? TPS43_SINGLE_TAP : 0;
         single_gestures |= config->press_and_hold && !config->force_click ? TPS43_PRESS_AND_HOLD : 0;
         single_gestures |= config->swipes ? TPS43_SWIPE_UP : 0;
         single_gestures |= config->swipes ? TPS43_SWIPE_DOWN : 0;
@@ -1497,7 +1523,7 @@ static int tps43_init(const struct device *dev) {
     k_work_init_delayable(&drv_data->force_watchdog, tps43_force_watchdog);
     /* Streaming and Bluetooth backpressure must not stall the system workqueue. */
     k_work_queue_start(&drv_data->work_q, drv_data->work_stack,
-                        K_THREAD_STACK_SIZEOF(drv_data->work_stack), 5, NULL);
+                        K_THREAD_STACK_SIZEOF(drv_data->work_stack), K_PRIO_PREEMPT(0), NULL);
 
     LOG_INF("=== Azoteq tps43 driver for device %s ===", dev->name);
 

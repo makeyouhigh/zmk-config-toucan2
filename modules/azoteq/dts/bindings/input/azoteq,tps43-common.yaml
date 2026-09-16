@@ -10,7 +10,7 @@ properties:
 
   force-click-threshold:
     type: int
-    default: 40
+    default: 30
     description: |
       Minimum touch-strength increase over baseline needed to press the left button.
       The larger of this value and force-click-threshold-percent is used.
@@ -18,21 +18,21 @@ properties:
 
   force-click-release-threshold:
     type: int
-    default: 20
+    default: 16
     description: |
       Release when the increase falls to the larger of this value and the
       percentage threshold or below. Finger lift releases immediately.
 
   force-click-threshold-percent:
     type: int
-    default: 12
+    default: 8
     description: |
       Press threshold as a percentage of the resting strength (0 to 100).
       The absolute minimum still applies. Zero disables percentage scaling.
 
   force-click-release-threshold-percent:
     type: int
-    default: 4
+    default: 3
     description: |
       Release threshold as a percentage of the resting strength (0 to 100).
       Must not exceed the press percentage. The absolute minimum still applies.
@@ -59,11 +59,13 @@ properties:
 
   force-click-motion-threshold:
     type: int
-    default: 3
+    default: 6
     description: |
       Recent movement tolerance in sensor units. Travel that starts before a
-      squeeze blocks new clicks until 48 ms after movement settles. A squeeze
-      candidate allows centroid displacement; this is not a touch-down anchor.
+      squeeze blocks new clicks until 16 ms after movement settles. Bounded
+      jitter does not restart the guard. Strength changes after stopping are
+      kept for the next squeeze instead of absorbed into the resting baseline.
+      A squeeze candidate allows centroid displacement.
 
   force-click-drag-threshold:
     type: int
@@ -182,7 +184,10 @@ properties:
   single-tap:
     type: boolean
     required: false
-    description: Enable single tap gesture
+    description: |
+      Enable single tap gesture. With force-click, taps are recognized in software
+      on lift, without the chip's single-tap delay on relative cursor movement.
+      Uses tap-time and tap-distance if set, otherwise 200 ms and 16 sensor units.
 
   two-finger-tap:
     type: boolean

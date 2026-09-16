@@ -2,12 +2,13 @@
 #include <assert.h>
 #include <stdio.h>
 #include "../modules/azoteq/drivers/input/tps43_force.h"
+#include "../modules/azoteq/drivers/input/tps43_tap.h"
 #include <toucan/touch_lease.h>
 
 static const struct tps43_force_config config = {
-    .press_delta = 40, .release_delta = 20, .press_percent = 12, .release_percent = 4,
+    .press_delta = 30, .release_delta = 16, .press_percent = 8, .release_percent = 3,
     .baseline_ms = 40, .debounce_ms = 16, .settle_ms = 64,
-    .motion_threshold = 3, .drag_threshold = 24,
+    .motion_threshold = 6, .drag_threshold = 24,
 };
 struct fixture { struct tps43_force_state s; int64_t t; uint16_t x, y; };
 static struct fixture fresh(void) { return (struct fixture){.x=1000, .y=1000}; }
@@ -72,8 +73,8 @@ static void test_movement_order_and_reposition(void) {
     f.x+=12; assert(sample(&f,1040)==0);
     f.x+=12; assert(sample(&f,1080)==0);
     f.x+=12; assert(sample(&f,1140)==0);
-    f.x+=12; assert(sample(&f,1180)==0);
-    f.x+=12; assert(sample(&f,1220)==TPS43_FORCE_PRESS);
+    f.x+=12; assert(sample(&f,1180)==TPS43_FORCE_PRESS);
+    f.x+=12; assert(sample(&f,1220)==0);
 
     f=fresh(); rest(&f,1000);
     for (int i=0;i<20;i++) {
@@ -81,6 +82,94 @@ static void test_movement_order_and_reposition(void) {
         assert(sample(&f,1400)==0); /* Fast travel also cancels a nascent candidate. */
     }
     assert(!f.s.down);
+}
+
+static void test_stop_squeeze_with_jitter(void) {
+    struct fixture f=fresh(); rest(&f,1000);
+    for (int i=0;i<30;i++) {
+        f.x += 12;
+        assert(sample(&f,1000)==0 && !f.s.suppress_motion);
+    }
+    uint16_t stopped_x=f.x;
+    /* Begin adding force immediately after stopping, with a wobbling centroid.
+     * The old guard absorbed these samples into baseline for at least 48 ms. */
+    f.x=stopped_x+2; assert(sample(&f,1040)==0);
+    assert(f.s.baseline==1000 && !f.s.suppress_motion);
+    f.x=stopped_x+1; assert(sample(&f,1100)==0);
+    f.x=stopped_x+3; assert(sample(&f,1100)==0);
+    f.x=stopped_x+2; assert(sample(&f,1100)==TPS43_FORCE_PRESS);
+    release(&f,1000);
+
+    f=fresh(); rest(&f,1000);
+    /* Bounded jitter cannot perpetually reset movement settling. */
+    for (int i=0;i<60;i++) {
+        f.x=(uint16_t)(1000+(i%2 ? 3 : -3));
+        assert(sample(&f,1000)==0 && !f.s.suppress_motion);
+    }
+    press(&f,1100); /* 10% rise: deliberately below the old 12% threshold. */
+}
+
+static void test_motion_after_click_stays_fluid(void) {
+    struct fixture f=fresh(); rest(&f,1000); press(&f,1200);
+    release(&f,1000);
+    for (int i=0;i<2;i++) assert(sample(&f,1000)==0);
+    f.x+=4; assert(sample(&f,1000)==0 && !f.s.suppress_motion);
+    for (int i=0;i<100;i++) {
+        f.x+=4;
+        assert(sample(&f,(uint16_t)(1100+(i%3)*70))==0);
+        assert(!f.s.down && !f.s.suppress_motion);
+    }
+    /* Releasing during a drag must not re-arm another squeeze while travelling. */
+    rest(&f,1000); press(&f,1200);
+    f.x+=30; assert(sample(&f,1200)==0 && f.s.dragging);
+    for (int i=0;i<3;i++) {
+        f.x+=10;
+        assert(sample(&f,1000)==(i==2 ? TPS43_FORCE_RELEASE : TPS43_FORCE_NONE));
+        assert(!f.s.suppress_motion);
+    }
+    for (int i=0;i<30;i++) {
+        f.x+=10;
+        assert(sample(&f,(uint16_t)(1200+(i%3)*70))==0);
+        assert(!f.s.down && !f.s.suppress_motion);
+    }
+}
+
+static bool tap_frame(struct tps43_tap_state *s, int64_t t, uint8_t fingers,
+                       bool valid, bool consumed, uint16_t x) {
+    return tps43_tap_step(s,t,fingers,valid,consumed,x,1000,200,16);
+}
+
+static void test_software_taps(void) {
+    struct tps43_tap_state s={0};
+    /* A tap clicks on lift; no wait for a potential second tap. */
+    for (int64_t start=0;start<200;start+=100) {
+        assert(!tap_frame(&s,start,1,true,false,1000));
+        assert(!tap_frame(&s,start+40,1,true,false,1003));
+        assert(tap_frame(&s,start+48,0,true,false,0));
+        assert(!tap_frame(&s,start+56,0,true,false,0));
+    }
+    /* Leaving the tap area, even if returning, must not click. */
+    assert(!tap_frame(&s,300,1,true,false,1000));
+    assert(!tap_frame(&s,308,1,true,false,1040));
+    assert(!tap_frame(&s,316,1,true,false,1000));
+    assert(!tap_frame(&s,324,0,true,false,0));
+    assert(!tap_frame(&s,400,1,true,false,1000));
+    assert(!tap_frame(&s,601,0,true,false,0));
+    assert(!tap_frame(&s,700,1,true,false,1000));
+    assert(!tap_frame(&s,716,1,true,true,1000));
+    assert(!tap_frame(&s,740,0,true,true,0));
+    assert(!tap_frame(&s,800,1,true,false,1000));
+    assert(!tap_frame(&s,808,2,true,false,1000));
+    assert(!tap_frame(&s,816,1,true,false,1000));
+    assert(!tap_frame(&s,824,0,true,false,0));
+    assert(!tap_frame(&s,900,1,true,false,1000));
+    assert(!tap_frame(&s,908,1,false,false,1000));
+    assert(!tap_frame(&s,916,0,true,false,0));
+    assert(!tap_frame(&s,1000,1,true,false,1000));
+    tps43_tap_cancel(&s); /* Sensor watchdog / I2C recovery cannot make a tap. */
+    assert(!tap_frame(&s,1016,0,true,false,0));
+    assert(!tps43_tap_step(&s,1100,1,true,false,1000,1000,1000,16));
+    assert(!tps43_tap_step(&s,1400,0,true,false,0,0,1000,16));
 }
 
 static void test_drag_without_repeated_freezes(void) {
@@ -157,6 +246,9 @@ static void test_lost_touch_release_and_heartbeat(void) {
 int main(void) {
     test_rest_noise_and_taps();
     test_movement_order_and_reposition();
+    test_stop_squeeze_with_jitter();
+    test_motion_after_click_stays_fluid();
+    test_software_taps();
     test_drag_without_repeated_freezes();
     test_force_double_click();
     test_strength_and_safety();

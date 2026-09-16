@@ -71,14 +71,14 @@
         filter-dynamic-bottom = <32>;
         // 접촉 후 강도가 증가하면 클릭. 임계값은 실기기에서 조절할 초기값입니다.
         force-click;
-        force-click-threshold = <40>;
-        force-click-release-threshold = <20>;
-        force-click-threshold-percent = <12>;
-        force-click-release-threshold-percent = <4>;
+        force-click-threshold = <30>;
+        force-click-release-threshold = <16>;
+        force-click-threshold-percent = <8>;
+        force-click-release-threshold-percent = <3>;
         force-click-baseline-ms = <40>;
         force-click-debounce-ms = <16>;
         force-click-settle-ms = <64>;
-        force-click-motion-threshold = <3>;
+        force-click-motion-threshold = <6>;
         force-click-drag-threshold = <24>;
         report-rate-active = <8>;
         report-rate-idle-touch = <8>;

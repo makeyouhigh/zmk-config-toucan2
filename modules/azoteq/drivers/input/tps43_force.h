@@ -7,6 +7,7 @@
 
 /* Shared by the device driver and the host-side behavioural tests. */
 #define TPS43_FORCE_STALE_MS 250
+#define TPS43_FORCE_STOP_MS 16
 
 enum tps43_force_event {
     TPS43_FORCE_RELEASE = -1,
@@ -35,6 +36,9 @@ struct tps43_force_state {
     bool candidate;
     bool dragging;
     bool suppress_motion;
+    bool previous_resting;
+    int32_t previous_dx;
+    int32_t previous_dy;
     int64_t started_ms;
     int64_t window_ms;
     int64_t last_sample_ms;
@@ -147,20 +151,33 @@ tps43_force_step(struct tps43_force_state *state,
      * A squeeze may move its centroid: once a stationary squeeze is a candidate,
      * position changes must not discard it and absorb its force into baseline. */
     bool was_moving = now_ms < state->motion_until_ms;
-    bool moving = tps43_force_moved(x, y, state->previous_x, state->previous_y,
-                                     config->motion_threshold) ||
-                  tps43_force_moved(x, y, state->motion_x, state->motion_y,
-                                     config->motion_threshold);
+    int32_t dx = (int32_t)x - state->previous_x;
+    int32_t dy = (int32_t)y - state->previous_y;
+    /* Accumulate slow travel without treating bounded back-and-forth jitter as
+     * a new movement on every report. Two small steps in the same direction
+     * also preserve movement-before-pressure ordering below the dead band. */
+    bool prior_travel = state->previous_resting &&
+        (((dx > 0 && state->previous_dx > 0) || (dx < 0 && state->previous_dx < 0)) &&
+             (dx + state->previous_dx > config->motion_threshold ||
+              dx + state->previous_dx < -(int32_t)config->motion_threshold));
+    prior_travel |= state->previous_resting &&
+        (((dy > 0 && state->previous_dy > 0) || (dy < 0 && state->previous_dy < 0)) &&
+             (dy + state->previous_dy > config->motion_threshold ||
+              dy + state->previous_dy < -(int32_t)config->motion_threshold));
+    bool moving = tps43_force_moved(x, y, state->motion_x, state->motion_y,
+                                    config->motion_threshold);
     state->previous_x = x;
     state->previous_y = y;
-    if (now_ms - state->motion_window_ms >= 24) {
+    state->previous_dx = dx;
+    state->previous_dy = dy;
+    if (moving) {
         state->motion_window_ms = now_ms;
         state->motion_x = x;
         state->motion_y = y;
     }
     if (!state->ready) {
         if (moving) {
-            state->motion_until_ms = now_ms + 48;
+            state->motion_until_ms = now_ms + TPS43_FORCE_STOP_MS;
         }
         uint16_t low = strength < state->strength_min ? strength : state->strength_min;
         uint16_t high = strength > state->strength_max ? strength : state->strength_max;
@@ -187,6 +204,7 @@ tps43_force_step(struct tps43_force_state *state,
                                                      config->press_percent);
     uint32_t release_threshold = tps43_force_threshold(state->baseline, config->release_delta,
                                                        config->release_percent);
+    state->previous_resting = delta < (int32_t)(press_threshold / 3U);
 
     if (!state->down && state->candidate &&
         tps43_force_moved(x, y, state->candidate_x, state->candidate_y,
@@ -194,21 +212,23 @@ tps43_force_step(struct tps43_force_state *state,
         /* A large ongoing swipe is not a squeeze; allow normal centroid
          * deformation during confirmation instead of the old tiny anchor gate. */
         state->candidate = false;
-        state->motion_until_ms = now_ms + 48;
+        state->motion_until_ms = now_ms + TPS43_FORCE_STOP_MS;
         state->baseline = strength;
         state->baseline_q8 = (int32_t)strength * 256;
         return TPS43_FORCE_NONE;
     }
 
     if (!state->down && !state->candidate &&
-        (was_moving || (moving && delta < (int32_t)(press_threshold / 3U)))) {
+        (was_moving || prior_travel || (moving && state->previous_resting))) {
         /* Travel that began before pressure rose cannot become a drag. The
          * local resting level follows travel; a short pause arms the next squeeze. */
-        state->baseline = strength;
-        state->baseline_q8 = (int32_t)strength * 256;
-        if (moving) {
-            state->motion_until_ms = now_ms + 48;
+        if (moving || prior_travel) {
+            state->baseline = strength;
+            state->baseline_q8 = (int32_t)strength * 256;
+            state->motion_until_ms = now_ms + TPS43_FORCE_STOP_MS;
         }
+        /* Once coordinates settle, keep the last moving baseline. Absorbing
+         * pressure during this guard made an immediate stop-and-squeeze vanish. */
         return TPS43_FORCE_NONE;
     }
     bool next_down = state->down ? delta > (int32_t)release_threshold
@@ -258,9 +278,10 @@ tps43_force_step(struct tps43_force_state *state,
         /* Keep the resting baseline and ready state for a second squeeze.
          * A drag stays fluid while release is debounced; only stationary click
          * deformation needs the small release guard. */
-        state->quiet_until_ms = now_ms + (state->dragging ? 0 : config->debounce_ms);
+        bool was_dragging = state->dragging;
+        state->quiet_until_ms = now_ms + (was_dragging ? 0 : config->debounce_ms);
         state->dragging = false;
-        state->motion_until_ms = now_ms;
+        state->motion_until_ms = now_ms + (was_dragging ? TPS43_FORCE_STOP_MS : 0);
         state->motion_window_ms = now_ms;
         state->motion_x = x;
         state->motion_y = y;
