@@ -13,8 +13,9 @@ jobs:
           cc -std=c11 -Wall -Wextra -Werror -pedantic -fsanitize=undefined,address -Imodules/azoteq/include tests/mouse_queue_test.c -o /tmp/mouse-queue-test
           /tmp/mouse-queue-test
           python3 tests/trace_parser_test.py
+          python3 tests/force_status_integration_test.py
   build:
     needs: force-click-tests
     uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@v0.3
     with:
-      archive_name: firmware-v17
+      archive_name: firmware-v18

@@ -85,7 +85,7 @@ static void settings_number(lv_obj_t *canvas,int x,int y,bool known,uint16_t val
 static void draw_force_settings(lv_obj_t *canvas,const struct status_state *state) {
     const struct toucan_force_levels *v=&state->force_levels;
     settings_text(canvas,4,2,94,&quinquefive_12,"FORCE");
-    settings_text(canvas,108,4,36,&quinquefive_8,"v17");
+    settings_text(canvas,108,4,36,&quinquefive_8,"v18");
     settings_text(canvas,4,20,64,&quinquefive_8,"REST");
     settings_text(canvas,78,20,64,&quinquefive_8,"MOVE");
     settings_text(canvas,4,34,136,&quinquefive_8,"Y/H LOCK");

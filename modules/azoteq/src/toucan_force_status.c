@@ -4,8 +4,8 @@
 #include <zephyr/input/input.h>
 #include <zephyr/sys/atomic.h>
 #include <zmk/behavior.h>
-#include <zmk/event_manager.h>
-#include <zmk/events/split_peripheral_status_changed.h>
+#include <zephyr/sys/iterable_sections.h>
+#include <zmk/split/transport/central.h>
 #include <toucan/force_status.h>
 
 static struct k_spinlock status_lock;
@@ -18,9 +18,34 @@ static atomic_t request_attempts;
 static void request_work(struct k_work *work);
 K_WORK_DELAYABLE_DEFINE(status_request_work,request_work);
 
+/* This runs on the central half. Peripheral-role connection events are not
+ * raised here. Read the central transport's local status without radio I/O. */
+static bool split_link_available(void) {
+    STRUCT_SECTION_FOREACH(zmk_split_transport_central,transport) {
+        if (!transport->api || !transport->api->get_status) continue;
+        struct zmk_split_transport_status status=transport->api->get_status();
+        if (status.available && status.enabled &&
+            status.connections!=ZMK_SPLIT_TRANSPORT_CONNECTIONS_STATUS_DISCONNECTED) return true;
+    }
+    return false;
+}
+
+/* Caller holds status_lock. A new link invalidates the previous snapshot. */
+static bool update_connection(bool link) {
+    if (connected==link) return false;
+    connected=link;
+    available=false;
+    receiver=(struct toucan_force_status_rx){0};
+    revision++;
+    return link;
+}
+
 static void receive_status(struct input_event *event) {
-    if (event->type != INPUT_EV_ABS) return;
+    if (event->type != INPUT_EV_ABS || event->code<TOUCAN_FORCE_STATUS_CODE ||
+        event->code>=TOUCAN_FORCE_STATUS_CODE+TOUCAN_FORCE_STATUS_PARTS) return;
+    bool link=split_link_available();
     k_spinlock_key_t key=k_spin_lock(&status_lock);
+    update_connection(link);
     if (connected && toucan_force_status_receive(&receiver,event->code,event->value,&received_levels)) {
         available=true;
         revision++;
@@ -30,19 +55,28 @@ static void receive_status(struct input_event *event) {
 INPUT_CALLBACK_DEFINE(DEVICE_DT_GET(DT_NODELABEL(trackpad_split)),receive_status);
 
 bool toucan_force_status_get(struct toucan_force_levels *out, uint32_t *out_revision) {
+    bool link=split_link_available();
     k_spinlock_key_t key=k_spin_lock(&status_lock);
+    bool new_link=update_connection(link);
     *out=received_levels;
     *out_revision=revision;
     bool valid=available;
     k_spin_unlock(&status_lock,key);
+    if (new_link) {
+        atomic_set(&request_attempts,0);
+        k_work_reschedule(&status_request_work,K_MSEC(30));
+    }
     return valid;
 }
 
 static void request_work(struct k_work *work) {
     ARG_UNUSED(work);
-    struct toucan_force_levels current;
-    uint32_t current_revision;
-    if (atomic_get(&request_attempts)>0 && toucan_force_status_get(&current,&current_revision)) return;
+    bool link=split_link_available();
+    k_spinlock_key_t key=k_spin_lock(&status_lock);
+    update_connection(link);
+    bool ready=available;
+    k_spin_unlock(&status_lock,key);
+    if (!link || (atomic_get(&request_attempts)>0 && ready)) return;
     const struct zmk_behavior_binding binding={
         .behavior_dev=DEVICE_DT_NAME(DT_NODELABEL(force_cfg)),.param1=FORCE_READ,.param2=0};
     const struct zmk_behavior_binding_event event={.layer=TOUCAN_FORCE_SYS_LAYER,.timestamp=k_uptime_get()};
@@ -62,23 +96,3 @@ void toucan_force_status_request(void) {
     atomic_set(&request_attempts,0);
     k_work_reschedule(&status_request_work,K_MSEC(30));
 }
-
-static int connection_changed(const zmk_event_t *eh) {
-    const struct zmk_split_peripheral_status_changed *event=as_zmk_split_peripheral_status_changed(eh);
-    if (!event) return ZMK_EV_EVENT_BUBBLE;
-    k_spinlock_key_t key=k_spin_lock(&status_lock);
-    connected=event->connected;
-    available=false;
-    receiver=(struct toucan_force_status_rx){0};
-    revision++;
-    k_spin_unlock(&status_lock,key);
-    if (event->connected) {
-        toucan_force_status_request();
-    } else {
-        k_work_cancel_delayable(&status_request_work);
-        toucan_force_status_pending();
-    }
-    return ZMK_EV_EVENT_BUBBLE;
-}
-ZMK_LISTENER(toucan_force_status,connection_changed);
-ZMK_SUBSCRIPTION(toucan_force_status,zmk_split_peripheral_status_changed);

@@ -11,7 +11,7 @@ try {
     $serial.DiscardInBuffer()
     $serial.Write('G')
     $line = $serial.ReadLine().Trim()
-    if ($line -notmatch '^LEVELS,(v14|v15|v16|v17),2,(\d+),(\d+),(\d+),(\d+),(\d+)$') {
+    if ($line -notmatch '^LEVELS,(v14|v15|v16|v17|v18),2,(\d+),(\d+),(\d+),(\d+),(\d+)$') {
         throw "Unexpected level response: $line"
     }
     [ordered]@{
