@@ -76,6 +76,8 @@
         force-click-threshold-percent = <8>;
         force-click-moving-threshold = <90>;
         force-click-moving-threshold-percent = <24>;
+        // v8 클릭 세기에서 이동 억제, 그 증가량보다 25% 더 누르면 클릭.
+        force-click-margin-percent = <25>;
         force-click-motion-settle-ms = <32>;
         force-click-release-threshold-percent = <3>;
         force-click-baseline-ms = <40>;

@@ -15,3 +15,5 @@ jobs:
   build:
     needs: force-click-tests
     uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@v0.3
+    with:
+      archive_name: firmware-v9

@@ -1634,6 +1634,7 @@ static int tps43_init(const struct device *dev) {
             .motion_settle_ms = DT_INST_PROP(inst, force_click_motion_settle_ms),                    \
             .drag_hold_ms = DT_INST_PROP(inst, force_click_drag_hold_ms),                            \
             .repeat_ms = DT_INST_PROP(inst, force_click_repeat_ms),                                  \
+            .click_margin_percent = DT_INST_PROP(inst, force_click_margin_percent),                  \
             .touch_hold_ms = DT_INST_PROP(inst, press_and_hold)                                      \
                 ? DT_INST_PROP_OR(inst, hold_time, 250) : 0,                                       \
         },                                                                                         \
@@ -1695,6 +1696,9 @@ static int tps43_init(const struct device *dev) {
     BUILD_ASSERT(DT_INST_REG_ADDR(inst) == TPS43_I2C_ADDR, "I2C address mismatch");                     \
     BUILD_ASSERT(!DT_INST_PROP(inst, three_finger_tap) || DT_INST_PROP(inst, force_click),             \
                  "Three finger tap requires streaming force mode");                                \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_margin_percent) > 0 &&                               \
+                 DT_INST_PROP(inst, force_click_margin_percent) <= 100,                            \
+                 "Click margin must be between 1 and 100 percent");                                 \
     BUILD_ASSERT(!DT_INST_PROP(inst, force_click) || !DT_INST_PROP(inst, press_and_hold) ||           \
                  (DT_INST_PROP_OR(inst, hold_time, 250) > 0 &&                                     \
                   DT_INST_PROP_OR(inst, hold_time, 250) <= 1000), "Invalid touch hold time");        \

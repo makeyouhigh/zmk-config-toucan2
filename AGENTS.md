@@ -10,6 +10,8 @@
 
 □ 최종 파일명은 toucan_left-v번호.uf2, toucan_right-v번호.uf2로 통일합니다. 전달 답변에도 같은 번호를 씁니다.
 
+□ GitHub 다운로드도 버전이 보이도록 build.yaml의 artifact-name과 .github/workflows/build.yml의 archive_name을 함께 갱신합니다.
+
 □ VERSION과 FIRMWARE_VERSIONS.md를 갱신합니다. 변경 내용, 실제 소스 커밋, 빌드 링크, 적용할 쪽과 검사 범위를 구분해서 기록합니다. 빌드 통과를 실기기 문제 해결로 표현하지 않습니다.
 
 □ 같은 파일을 재명명하거나 문서만 수정할 때는 버전을 올리거나 재설치를 요구하지 않습니다.

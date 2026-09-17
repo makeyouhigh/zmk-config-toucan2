@@ -1,4 +1,15 @@
 properties:
+  force-click-margin-percent:
+    type: int
+    default: 25
+    description: |
+      Additional percentage of the motion-lock strength increase required to
+      click (1 to 100). The existing stationary/moving thresholds lock motion;
+      25 requires 125 percent of that increase to click. Freeze the baseline
+      while pressure builds; relaxing below half the lock threshold unlocks.
+      A large deliberate move cancels the preliminary lock. Active drags bypass
+      the lock. These are uncalibrated sensor deltas, not physical force units.
+
   force-click:
     type: boolean
     description: |
@@ -12,8 +23,9 @@ properties:
     type: int
     default: 30
     description: |
-      Minimum touch-strength increase over baseline needed to press the left button.
+      Minimum touch-strength increase over baseline needed to lock squeeze motion.
       The larger of this value and force-click-threshold-percent is used.
+      Clicking requires the additional force-click-margin-percent increase.
       Must exceed force-click-release-threshold. Uncalibrated starting value.
 
   force-click-release-threshold:
@@ -28,12 +40,12 @@ properties:
   force-click-moving-threshold:
     type: int
     default: 90
-    description: Minimum strength rise to start a click during pointer movement.
+    description: Minimum strength rise to lock motion during a moving squeeze, before the additional click margin.
 
   force-click-moving-threshold-percent:
     type: int
     default: 24
-    description: Moving click threshold as a percentage of baseline; the absolute minimum also applies.
+    description: Moving motion-lock threshold as a percentage of baseline; the absolute minimum and additional click margin also apply.
 
   force-click-motion-settle-ms:
     type: int
@@ -44,7 +56,7 @@ properties:
     type: int
     default: 8
     description: |
-      Press threshold as a percentage of the resting strength (0 to 100).
+      Motion-lock threshold as a percentage of the resting strength (0 to 100).
       The absolute minimum still applies. Zero disables percentage scaling.
 
   force-click-release-threshold-percent:

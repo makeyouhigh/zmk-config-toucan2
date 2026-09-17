@@ -33,6 +33,7 @@ struct tps43_force_config {
     uint16_t drag_hold_ms;
     uint16_t repeat_ms;
     uint16_t touch_hold_ms;
+    uint16_t click_margin_percent;
 };
 
 struct tps43_force_state {
@@ -42,6 +43,7 @@ struct tps43_force_state {
     bool down;
     bool tap_consumed;
     bool candidate;
+    bool prepress;
     bool candidate_moving;
     bool dragging;
     bool drag_armed;
@@ -75,6 +77,8 @@ struct tps43_force_state {
     uint16_t previous_y;
     uint16_t motion_x;
     uint16_t motion_y;
+    uint16_t repeat_x;
+    uint16_t repeat_y;
 };
 
 static inline enum tps43_force_event
@@ -126,6 +130,7 @@ static inline void tps43_force_window(struct tps43_force_state *state, int64_t n
                                       uint16_t strength) {
     state->ready = false;
     state->candidate = false;
+    state->prepress = false;
     state->window_ms = now_ms;
     state->strength_sum = strength;
     state->samples = 1;
@@ -235,26 +240,64 @@ tps43_force_step(struct tps43_force_state *state,
                                                        config->release_percent);
     state->previous_resting = delta < (int32_t)(resting_threshold / 3U);
     bool travelling = was_moving || prior_travel || (moving && state->previous_resting);
-    if (!state->down && travelling) {
-        state->repeat_until_ms = 0;
-    }
     bool repeating = !state->down && now_ms < state->repeat_until_ms;
+    if (repeating) {
+        /* Two tiny steps are not enough to distinguish a second squeeze from
+         * finger-centroid jitter. Keep the released click's position inside
+         * the existing motion deadband. Leaving it resumes movement now, with
+         * no queued displacement or extra timed wait. Once pressure starts a
+         * candidate, its existing press-travel limit handles deformation. */
+        if (!state->candidate && !state->prepress && tps43_force_moved(x, y, state->repeat_x,
+                                                   state->repeat_y, config->motion_threshold)) {
+            state->repeat_until_ms = 0;
+            repeating = false;
+            state->quiet_until_ms = 0;
+            state->suppress_motion = false;
+        } else {
+            travelling = false;
+            state->suppress_motion = true;
+        }
+    }
     uint32_t moving_threshold = tps43_force_threshold(state->baseline,
         config->moving_press_delta, config->moving_press_percent);
     if (moving_threshold < resting_threshold) { moving_threshold = resting_threshold; }
-    uint32_t press_threshold = state->candidate && !state->down
+    uint32_t lock_threshold = (state->candidate || state->prepress) && !state->down
         ? state->candidate_threshold : (travelling ? moving_threshold :
             (repeating ? state->repeat_threshold : resting_threshold));
+    uint32_t press_threshold =
+        (lock_threshold * (100U + config->click_margin_percent) + 99U) / 100U;
+    if (!state->down) {
+        /* v8's click threshold now locks motion; a further strength increase
+         * clicks. Freeze the chosen baseline/mode while pressure builds, so
+         * squeeze-centroid motion cannot move the target or raise its threshold.
+         * Relaxing below half the lock threshold releases it without chatter. */
+        if (state->prepress && delta <= (int32_t)(lock_threshold / 2U)) {
+            state->prepress = false;
+            state->candidate = false;
+        }
+        if (!state->prepress && delta >= (int32_t)lock_threshold) {
+            state->prepress = true;
+            state->candidate_moving = travelling;
+            state->candidate_threshold = (uint16_t)lock_threshold;
+            state->candidate_x = x;
+            state->candidate_y = y;
+        }
+    }
 
-    if (!state->down && state->candidate && !state->candidate_moving &&
+    if (!state->down && (state->candidate || state->prepress) &&
+        (!state->candidate_moving || !state->candidate) &&
         tps43_force_moved(x, y, state->candidate_x, state->candidate_y,
                           TPS43_FORCE_PRESS_TRAVEL_LIMIT)) {
         /* A large ongoing swipe is not a squeeze; allow normal centroid
          * deformation during confirmation instead of the old tiny anchor gate. */
         state->candidate = false;
+        state->prepress = false;
         state->motion_until_ms = now_ms + config->motion_settle_ms;
         state->baseline = strength;
         state->baseline_q8 = (int32_t)strength * 256;
+        state->repeat_until_ms = 0;
+        state->quiet_until_ms = 0;
+        state->suppress_motion = false;
         return TPS43_FORCE_NONE;
     }
 
@@ -280,7 +323,7 @@ tps43_force_step(struct tps43_force_state *state,
      * not click or freeze the pointer. A squeeze/candidate has priority over
      * timed hold, so waiting to force-click does not become a drag. */
     if (touch_hold_ready && moving && state->previous_resting &&
-        !state->down && !state->candidate && !next_down) {
+        !state->down && !state->candidate && !state->prepress && !next_down) {
         state->down = true;
         state->dragging = true;
         state->tap_consumed = true;
@@ -308,6 +351,10 @@ tps43_force_step(struct tps43_force_state *state,
     if (next_down == state->down) {
         state->candidate = false;
         if (!state->down) {
+            if (state->prepress) {
+                state->suppress_motion = true;
+                return TPS43_FORCE_NONE;
+            }
             if (repeating) {
                 /* Follow the actual trough immediately; a quick second rise
                  * must not chase a slowly adapting average of the first click. */
@@ -330,11 +377,13 @@ tps43_force_step(struct tps43_force_state *state,
     }
     if (!state->candidate) {
         state->candidate = true;
-        state->candidate_moving = travelling && !state->down;
-        state->candidate_threshold = (uint16_t)press_threshold;
         state->candidate_ms = now_ms;
-        state->candidate_x = x;
-        state->candidate_y = y;
+        if (!state->prepress) {
+            state->candidate_moving = travelling && !state->down;
+            state->candidate_threshold = (uint16_t)lock_threshold;
+            state->candidate_x = x;
+            state->candidate_y = y;
+        }
     }
     /* Do not emit cursor displacement during the force decision itself. */
     state->suppress_motion = !state->down || !state->dragging;
@@ -342,6 +391,7 @@ tps43_force_step(struct tps43_force_state *state,
         return TPS43_FORCE_NONE;
     }
     state->candidate = false;
+    state->prepress = false;
     state->down = next_down;
     if (next_down) {
         state->press_peak = strength;
@@ -359,6 +409,8 @@ tps43_force_step(struct tps43_force_state *state,
         state->baseline_q8 = (int32_t)strength * 256;
         state->repeat_until_ms = now_ms + config->repeat_ms;
         state->repeat_threshold = (uint16_t)release_threshold;
+        state->repeat_x = x;
+        state->repeat_y = y;
         state->press_peak = 0;
         state->previous_dx = state->previous_dy = 0;
         state->previous_resting = false;
