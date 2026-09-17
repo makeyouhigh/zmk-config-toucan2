@@ -54,8 +54,9 @@ static void touch_guard_input(struct input_event *event) {
     bool handled = true;
     k_spinlock_key_t key = k_spin_lock(&lease_lock);
     if (event->type == INPUT_EV_ABS && event->code == TOUCAN_INPUT_TOUCH_STATE_CODE) {
-        toucan_touch_lease_update(&lease, now,
-            CLAMP(event->value, TOUCAN_TOUCH_NONE, TOUCAN_TOUCH_PRESSED));
+        struct toucan_force_display_sample sample;
+        handled = toucan_force_display_decode(event->value, &sample);
+        if (handled) toucan_touch_lease_update(&lease, now, sample.state);
     } else if (event->type == INPUT_EV_KEY && event->code == INPUT_BTN_TOUCH) {
         toucan_touch_lease_update(&lease, now,
             event->value ? MAX(lease.state, TOUCAN_TOUCH_CONTACT) : TOUCAN_TOUCH_NONE);

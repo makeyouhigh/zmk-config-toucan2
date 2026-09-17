@@ -26,6 +26,7 @@ struct status_state {
     struct toucan_force_levels force_levels;
     uint32_t force_revision;
     bool force_known;
+    uint32_t live_force_key;
 #if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
     struct zmk_endpoint_instance selected_endpoint;
     int active_profile_index;

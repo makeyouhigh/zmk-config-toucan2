@@ -70,6 +70,44 @@ struct connection_status_state {
 
 static sys_slist_t widgets = SYS_SLIST_STATIC_INIT(&widgets);
 
+#define FORCE_TP_LAYER DT_PROP(DT_PATH(touch_guard), layer)
+static atomic_t force_display_payload;
+static atomic_t force_updated_ms;
+
+static void force_input_event(struct input_event *event) {
+    struct toucan_force_display_sample sample;
+    if (event->type == INPUT_EV_ABS && event->code == TOUCAN_INPUT_TOUCH_STATE_CODE &&
+        toucan_force_display_decode(event->value, &sample)) {
+        atomic_set(&force_display_payload, event->value);
+        atomic_set(&force_updated_ms, (atomic_val_t)k_uptime_get_32());
+    }
+}
+INPUT_CALLBACK_DEFINE(DEVICE_DT_GET(DT_NODELABEL(trackpad_split)), force_input_event);
+
+static struct toucan_force_display_sample current_force_sample(void) {
+    struct toucan_force_display_sample sample = {0};
+    uint32_t age = k_uptime_get_32() - (uint32_t)atomic_get(&force_updated_ms);
+    if (age <= TOUCAN_FORCE_DISPLAY_STALE_MS)
+        toucan_force_display_decode(atomic_get(&force_display_payload), &sample);
+    return sample;
+}
+
+/* Replace only the battery area. Modifier icons start at y=64. */
+static void draw_live_force(lv_obj_t *canvas) {
+    struct toucan_force_display_sample sample = current_force_sample();
+    char text[5];
+    toucan_force_display_text(text, sample.strength, sample.known);
+    lv_draw_rect_dsc_t background;
+    init_rect_dsc(&background, LVGL_BACKGROUND);
+    background.bg_opa = LV_OPA_COVER;
+    background.border_width = 0;
+    background.radius = 0;
+    lv_canvas_draw_rect(canvas, 0, 16, SCREEN_WIDTH, 44, &background);
+    lv_draw_label_dsc_t label;
+    init_label_dsc(&label, LVGL_FOREGROUND, &quinquefive_24, LV_TEXT_ALIGN_CENTER);
+    lv_canvas_draw_text(canvas, 0, 22, SCREEN_WIDTH, &label, text);
+}
+
 static void settings_text(lv_obj_t *canvas, int x, int y, int width,
                           const lv_font_t *font, const char *text) {
     lv_draw_label_dsc_t label;
@@ -85,7 +123,7 @@ static void settings_number(lv_obj_t *canvas,int x,int y,bool known,uint16_t val
 static void draw_force_settings(lv_obj_t *canvas,const struct status_state *state) {
     const struct toucan_force_levels *v=&state->force_levels;
     settings_text(canvas,4,2,94,&quinquefive_12,"FORCE");
-    settings_text(canvas,108,4,36,&quinquefive_8,"v18");
+    settings_text(canvas,108,4,36,&quinquefive_8,"v19");
     settings_text(canvas,4,20,64,&quinquefive_8,"REST");
     settings_text(canvas,78,20,64,&quinquefive_8,"MOVE");
     settings_text(canvas,4,34,136,&quinquefive_8,"Y/H LOCK");
@@ -132,8 +170,12 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[],
 
     draw_layer_status(canvas, state);
     draw_profile_status(canvas, state);
-    draw_battery_status(canvas, state);
-    draw_battery_peripheral_status(canvas, state);
+    if (state->layer_index == FORCE_TP_LAYER) {
+        draw_live_force(canvas);
+    } else {
+        draw_battery_status(canvas, state);
+        draw_battery_peripheral_status(canvas, state);
+    }
 }
 
 /**
@@ -352,24 +394,6 @@ ZMK_SUBSCRIPTION(widget_output_status, zmk_ble_active_profile_changed);
 #if defined(CONFIG_TOUCAN_STATUS_SCREEN) && CONFIG_TOUCAN_STATUS_SCREEN == 2
 
 #define MODIFIERS_REFRESH_MS 50
-#define FORCE_DISPLAY_STALE_MS 750
-
-static atomic_t touch_state;
-static atomic_t force_updated_ms;
-
-static void force_input_event(struct input_event *event) {
-    if (event->type == INPUT_EV_ABS && event->code == TOUCAN_INPUT_TOUCH_STATE_CODE) {
-        atomic_set(&touch_state, CLAMP(event->value, TOUCAN_TOUCH_NONE, TOUCAN_TOUCH_PRESSED));
-        atomic_set(&force_updated_ms, (atomic_val_t)k_uptime_get_32());
-    }
-}
-
-INPUT_CALLBACK_DEFINE(DEVICE_DT_GET(DT_NODELABEL(trackpad_split)), force_input_event);
-
-static uint8_t current_touch_state(void) {
-    uint32_t age = k_uptime_get_32() - (uint32_t)atomic_get(&force_updated_ms);
-    return age > FORCE_DISPLAY_STALE_MS ? TOUCAN_TOUCH_NONE : (uint8_t)atomic_get(&touch_state);
-}
 
 static void modifiers_refresh_work_cb(struct k_work *work);
 
@@ -388,7 +412,9 @@ static void modifiers_refresh_work_cb(struct k_work *work) {
     const uint8_t modifiers = modifiers_normalize(
         zmk_hid_get_keyboard_report()->body.modifiers
     );
-    const uint8_t touch = current_touch_state();
+    const struct toucan_force_display_sample sample = current_force_sample();
+    const uint8_t touch = sample.state;
+    const uint32_t live_key = ((uint32_t)sample.known << 16) | sample.strength;
 
     struct zmk_widget_screen *widget;
 
@@ -404,6 +430,10 @@ static void modifiers_refresh_work_cb(struct k_work *work) {
                 draw_top(widget->obj,widget->cbuf,&widget->state);
             }
             continue;
+        }
+        if (widget->state.layer_index == FORCE_TP_LAYER && widget->state.live_force_key != live_key) {
+            widget->state.live_force_key = live_key;
+            draw_live_force(lv_obj_get_child(widget->obj, 0));
         }
         if (widget->state.modifiers != modifiers || widget->state.touch_state != touch) {
             widget->state.modifiers = modifiers;

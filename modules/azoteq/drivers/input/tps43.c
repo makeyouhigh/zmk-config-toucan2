@@ -36,15 +36,17 @@ static int tps43_force_report(const struct device *dev, enum tps43_force_event e
 /* The split input transport forwards this absolute value to the LCD side.
  * sync=false keeps display-only updates from generating mouse HID reports.
  * Never wait for display telemetry while servicing the sensor/button path. */
-static void tps43_force_display_report(const struct device *dev, uint8_t value) {
+static void tps43_force_display_report(const struct device *dev, uint8_t value,
+                                       uint16_t strength, bool known) {
     struct tps43_drv_data *data = dev->data;
     int64_t now = k_uptime_get();
     bool changed = value != data->force_display_state;
     /* State transitions are immediate; a heartbeat lets the LCD expire stale data. */
-    if (!changed && now - data->force_display_report_ms < 250) {
+    if (!changed && now - data->force_display_report_ms < TOUCAN_FORCE_DISPLAY_INTERVAL_MS) {
         return;
     }
-    if (input_report_abs(dev, TOUCAN_INPUT_TOUCH_STATE_CODE, value, false, K_NO_WAIT) == 0) {
+    int32_t payload = toucan_force_display_pack(value, strength, known);
+    if (input_report_abs(dev, TOUCAN_INPUT_TOUCH_STATE_CODE, payload, false, K_NO_WAIT) == 0) {
         data->force_display_report_ms = now;
         data->force_display_state = value;
     }
@@ -62,7 +64,7 @@ static void tps43_force_cancel_and_report(const struct device *dev) {
         data->touching = false;
         input_report_key(dev, INPUT_BTN_TOUCH, 0, true, K_MSEC(5));
     }
-    tps43_force_display_report(dev, TOUCAN_TOUCH_NONE);
+    tps43_force_display_report(dev, TOUCAN_TOUCH_NONE, 0, false);
 }
 
 static void tps43_force_watchdog(struct k_work *work) {
@@ -616,7 +618,7 @@ static void tps43_work_handler(struct k_work *work) {
                                            config->tap_distance >= 0 ? config->tap_distance : 16);
         }
         tps43_force_display_report(dev, tps43_force_display_state(&drv_data->force,
-                                                                 num_fingers, valid));
+                                  num_fingers, valid), strength, valid && num_fingers <= 1);
         if (is_touching) {
             k_work_reschedule_for_queue(&drv_data->work_q, &drv_data->force_watchdog,
                                          K_MSEC(TPS43_FORCE_STALE_MS));
