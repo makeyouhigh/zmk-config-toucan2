@@ -1,4 +1,4 @@
-현재 수정본: [v10 — 느린 정밀 이동 중 자동 드래그 방지 + 빠른 클릭 해제](FIRMWARE_VERSIONS.md)
+현재 펌웨어: [v10 — 느린 정밀 이동 중 자동 드래그 방지 + 빠른 클릭 해제](FIRMWARE_VERSIONS.md) · [검증된 빌드](https://github.com/makeyouhigh/zmk-config-toucan2/actions/runs/35179475932)
 
 # ZMK config for beekeeb Toucan2 Keyboard
 
