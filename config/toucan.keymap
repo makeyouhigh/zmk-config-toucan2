@@ -246,6 +246,16 @@
     };
 
     behaviors {
+        /* Keymap Editor reads this file, not the module's behaviors/force.dtsi.
+         * This merges the same node; it does not create a second device.
+         * param1: 0 lock+, 1 lock-, 2 click+, 3 click-, 4 release+, 5 release-, 6 reset.
+         * param2: adjustment 1..2000 (reset uses 0).
+         */
+        force_cfg: force_cfg {
+            compatible = "zmk,behavior-force-config";
+            #binding-cells = <2>;
+            display-name = "포스터치 기준";
+        };
     };
 
     macros {
