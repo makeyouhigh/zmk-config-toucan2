@@ -32,6 +32,7 @@ struct tps43_force_config {
     uint16_t motion_settle_ms;
     uint16_t drag_hold_ms;
     uint16_t repeat_ms;
+    uint16_t touch_hold_ms;
 };
 
 struct tps43_force_state {
@@ -56,6 +57,7 @@ struct tps43_force_state {
     int64_t motion_until_ms;
     int64_t pressed_ms;
     int64_t repeat_until_ms;
+    int64_t hold_since_ms;
     uint64_t strength_sum;
     uint32_t samples;
     uint16_t baseline;
@@ -168,6 +170,7 @@ tps43_force_step(struct tps43_force_state *state,
         state->active = true;
         state->tap_consumed = false;
         state->started_ms = now_ms;
+        state->hold_since_ms = now_ms;
         state->previous_x = state->motion_x = x;
         state->previous_y = state->motion_y = y;
         tps43_force_window(state, now_ms, strength);
@@ -188,11 +191,16 @@ tps43_force_step(struct tps43_force_state *state,
          tps43_force_small_travel(dy, state->previous_dy, config->motion_threshold));
     bool moving = tps43_force_moved(x, y, state->motion_x, state->motion_y,
                                     config->motion_threshold);
+    /* Arm without pressing. Capture readiness before this frame starts moving;
+     * a prior force click keeps timed hold disabled until the next contact. */
+    bool touch_hold_ready = config->touch_hold_ms && !state->tap_consumed &&
+        now_ms - state->hold_since_ms >= config->touch_hold_ms;
     state->previous_x = x;
     state->previous_y = y;
     state->previous_dx = dx;
     state->previous_dy = dy;
     if (moving) {
+        state->hold_since_ms = now_ms;
         state->motion_x = x;
         state->motion_y = y;
     }
@@ -267,6 +275,19 @@ tps43_force_step(struct tps43_force_state *state,
                    (uint32_t)strength + release_threshold <= state->press_peak;
     bool next_down = state->down ? delta > (int32_t)release_threshold && !relaxed
                                  : delta >= (int32_t)press_threshold;
+
+    /* Share the force button's ownership and release path. Holding alone must
+     * not click or freeze the pointer. A squeeze/candidate has priority over
+     * timed hold, so waiting to force-click does not become a drag. */
+    if (touch_hold_ready && moving && state->previous_resting &&
+        !state->down && !state->candidate && !next_down) {
+        state->down = true;
+        state->dragging = true;
+        state->tap_consumed = true;
+        state->repeat_until_ms = 0;
+        state->suppress_motion = false;
+        return TPS43_FORCE_PRESS;
+    }
 
     /* A quick squeeze/rebound cannot latch drag. Arm after the configured
      * hold, discard displacement accumulated during that hold, then require

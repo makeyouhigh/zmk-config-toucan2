@@ -94,7 +94,9 @@
         two-finger-tap;
         three-finger-tap;
         single-tap;
-        // 시간 기반 길게 누르기는 포스터치로 대체합니다.
+        // 250ms 정지 후 움직이면 드래그. 포스터치와 버튼 상태를 공유합니다.
+        press-and-hold;
+        hold-time = <250>;
         //swipes;
         //three-finger-swipe;
         //three-finger-swipe-throttle-ms = <1200>;

@@ -3,7 +3,7 @@ properties:
     type: boolean
     description: |
       Use an increase in touch strength over an adaptive resting baseline for
-      left-button down/up. Replaces timed press-and-hold while enabled. A normal
+      left-button down/up. Timed press-and-hold can be enabled separately. A normal
       single tap can be enabled separately, but is suppressed after a force click in
       the same contact. Two-finger tap and scroll remain available. Strength is not a
       calibrated force measurement. Streams sensor frames only during contact.
@@ -278,7 +278,14 @@ properties:
   press-and-hold:
     type: boolean
     required: false
-    description: Enable press and hold gesture
+    description: |
+      Enable press and hold. With force-click enabled, stationary contact for
+      hold-time arms a software drag; moving beyond force-click-motion-threshold
+      then presses the left button. Holding alone does not click or suppress
+      motion. Force candidates take priority, and a completed force click
+      disables timed hold until all fingers lift. A started drag stays held until
+      lift; invalid data, multiple fingers or stale input also release it.
+      Without force-click, use the sensor's native press-and-hold gesture.
 
   invert-x:
     type: boolean
@@ -544,6 +551,8 @@ properties:
     required: false
     description: |
       Minimum time for a press-and-hold gesture in milliseconds (2 bytes).
+      With force-click, arms software hold-to-drag after this stationary interval;
+      defaults to 250 ms when omitted. The button goes down on subsequent travel.
       Sets the minimum duration a finger must be held to trigger a hold gesture.
       Written to the HOLD_TIME register (0x06BD).
       Only written if explicitly set.

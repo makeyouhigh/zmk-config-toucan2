@@ -473,7 +473,124 @@ static void test_early_motion_is_not_replayed_as_drag(void) {
     assert(send_frame(&f,0,0,true)==TPS43_FORCE_RELEASE);
 }
 
+static int touch_hold_frame(struct fixture *f, int64_t now, uint8_t fingers,
+                            uint16_t strength, bool valid) {
+    struct tps43_force_config timed = config;
+    timed.touch_hold_ms = 250;
+    f->t = now;
+    return tps43_force_step(&f->s,&timed,now,fingers,strength,valid,f->x,f->y);
+}
+static void touch_hold_rest(struct fixture *f, int64_t end) {
+    for (int64_t t=0;t<=end;t+=8) {
+        assert(touch_hold_frame(f,t,1,1000,true)==TPS43_FORCE_NONE);
+        assert(!f->s.down && !f->s.suppress_motion);
+    }
+}
+static void test_touch_hold_boundary_and_latch(void) {
+    struct fixture f=fresh(); touch_hold_rest(&f,248);
+    f.x+=7; assert(touch_hold_frame(&f,249,1,1000,true)==0);
+    assert(!f.s.down); /* Movement before 250 ms restarts the rest interval. */
+    for (int64_t t=257;t<499;t+=8) assert(touch_hold_frame(&f,t,1,1000,true)==0);
+    f.x+=7; assert(touch_hold_frame(&f,499,1,1000,true)==TPS43_FORCE_PRESS);
+    assert(f.s.dragging && f.s.down && f.s.tap_consumed && !f.s.suppress_motion);
+    for (int i=1;i<=120;i++) {
+        f.x++;
+        assert(touch_hold_frame(&f,499+i*8,1,(uint16_t)(i%2 ? 0 : 1600),true)==0);
+        assert(f.s.down && f.s.dragging && !f.s.suppress_motion);
+    }
+    assert(touch_hold_frame(&f,f.t+8,0,0,true)==TPS43_FORCE_RELEASE);
+    assert(touch_hold_frame(&f,f.t+8,0,0,true)==TPS43_FORCE_NONE);
+}
+static void test_touch_hold_waiting_and_jitter(void) {
+    struct fixture f=fresh();
+    for (int64_t t=0;t<=4000;t+=8) {
+        f.x=(uint16_t)(1000+(t%16 ? 3 : -3));
+        assert(touch_hold_frame(&f,t,1,1000,true)==0);
+        assert(!f.s.down && !f.s.suppress_motion);
+    }
+    /* Holding/jitter alone does not emit a click, even beyond double-click time. */
+    assert(touch_hold_frame(&f,4008,0,0,true)==0);
+    f=fresh(); touch_hold_rest(&f,248);
+    f.x+=7; assert(touch_hold_frame(&f,250,1,1000,true)==TPS43_FORCE_PRESS);
+}
+static void test_touch_hold_travel_then_stop(void) {
+    for (int step=1;step<=10;step+=9) {
+        struct fixture f=fresh();
+        for (int64_t t=0;t<=2000;t+=8) {
+            f.x=(uint16_t)(f.x+step);
+            assert(touch_hold_frame(&f,t,1,1000,true)==0);
+            assert(!f.s.down && !f.s.suppress_motion);
+        }
+        for (int64_t t=2008;t<=2256;t+=8)
+            assert(touch_hold_frame(&f,t,1,1000,true)==0);
+        f.x+=7;
+        assert(touch_hold_frame(&f,2264,1,1000,true)==TPS43_FORCE_PRESS);
+        assert(!f.s.suppress_motion);
+    }
+}
+static void test_touch_hold_force_priority(void) {
+    struct fixture f=fresh(); touch_hold_rest(&f,400);
+    /* Centroid shift during a gradual squeeze must not become timed drag. */
+    f.x+=12; assert(touch_hold_frame(&f,408,1,1040,true)==0 && !f.s.dragging);
+    f.x+=12; assert(touch_hold_frame(&f,416,1,1100,true)==0 && !f.s.dragging);
+    f.x+=12; assert(touch_hold_frame(&f,424,1,1100,true)==0 && !f.s.dragging);
+    assert(touch_hold_frame(&f,432,1,1100,true)==TPS43_FORCE_PRESS);
+    assert(f.s.down && !f.s.dragging && f.s.suppress_motion);
+    assert(touch_hold_frame(&f,440,1,1000,true)==0);
+    assert(touch_hold_frame(&f,448,1,1000,true)==0);
+    assert(touch_hold_frame(&f,456,1,1000,true)==TPS43_FORCE_RELEASE);
+    /* Time passing between squeezes cannot take ownership of the button. */
+    for (int64_t t=464;t<=744;t+=8) assert(touch_hold_frame(&f,t,1,1000,true)==0);
+    assert(touch_hold_frame(&f,752,1,1100,true)==0);
+    assert(touch_hold_frame(&f,760,1,1100,true)==0);
+    assert(touch_hold_frame(&f,768,1,1100,true)==TPS43_FORCE_PRESS);
+    assert(!f.s.dragging);
+    assert(touch_hold_frame(&f,776,1,1000,true)==0);
+    assert(touch_hold_frame(&f,784,1,1000,true)==0);
+    assert(touch_hold_frame(&f,792,1,1000,true)==TPS43_FORCE_RELEASE);
+    for (int64_t t=800;t<=1600;t+=8) assert(touch_hold_frame(&f,t,1,1000,true)==0);
+    f.x+=7; assert(touch_hold_frame(&f,1608,1,1000,true)==0 && !f.s.dragging);
+}
+static void test_touch_hold_tap_and_gesture_recovery(void) {
+    for (int drag=0;drag<2;drag++) {
+        struct fixture f=fresh(); struct tps43_tap_state tap={0};
+        int presses=0, releases=0, taps=0;
+        int end=drag ? 320 : 120;
+        for (int t=0;t<=end;t+=8) {
+            bool lift=t==end;
+            if (drag && t>=256 && !lift) f.x+=7;
+            int event=touch_hold_frame(&f,t,lift ? 0 : 1,lift ? 0 : 1000,true);
+            presses+=event==TPS43_FORCE_PRESS; releases+=event==TPS43_FORCE_RELEASE;
+            taps+=tps43_tap_step(&tap,t,lift ? 0 : 1,true,f.s.tap_consumed,
+                                 f.x,f.y,200,16);
+        }
+        assert(presses==drag && releases==drag && taps==!drag);
+    }
+    for (int reason=0;reason<3;reason++) {
+        struct fixture f=fresh(); touch_hold_rest(&f,248);
+        f.x+=7; assert(touch_hold_frame(&f,250,1,1000,true)==TPS43_FORCE_PRESS);
+        int64_t cancel=reason==2 ? 501 : 258;
+        assert(touch_hold_frame(&f,cancel,reason==0 ? 2 : 1,1000,
+                                 reason!=1)==TPS43_FORCE_RELEASE);
+        for (int64_t t=cancel+8;t<cancel+400;t+=8) {
+            f.x+=7; assert(touch_hold_frame(&f,t,1,1000,true)==0);
+            assert(!f.s.down); /* No rearm after scroll/error without a lift. */
+        }
+        assert(touch_hold_frame(&f,f.t+8,0,0,true)==0);
+        int64_t start=f.t+8;
+        for (int64_t t=start;t<start+250;t+=8)
+            assert(touch_hold_frame(&f,t,1,1000,true)==0);
+        f.x+=7;
+        assert(touch_hold_frame(&f,start+250,1,1000,true)==TPS43_FORCE_PRESS);
+    }
+}
+
 int main(void) {
+    test_touch_hold_boundary_and_latch();
+    test_touch_hold_waiting_and_jitter();
+    test_touch_hold_travel_then_stop();
+    test_touch_hold_force_priority();
+    test_touch_hold_tap_and_gesture_recovery();
     puts("test_squeeze_rebound_must_not_latch_drag"); fflush(stdout); test_squeeze_rebound_must_not_latch_drag();
     puts("test_repeat_from_local_trough"); fflush(stdout); test_repeat_from_local_trough();
     puts("test_early_motion_is_not_replayed_as_drag"); fflush(stdout); test_early_motion_is_not_replayed_as_drag();
