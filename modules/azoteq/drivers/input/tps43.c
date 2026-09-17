@@ -25,8 +25,26 @@ static void tps43_force_communication(const struct device *dev);
 static void tps43_power_work(struct k_work *work);
 
 static int tps43_force_report(const struct device *dev, enum tps43_force_event event) {
+    struct tps43_drv_data *data = dev->data;
+    /* A failed release must be retried before another button edge. The normal
+     * sensor frame or existing watchdog performs the retry; no new timer. */
+    if (data->force_release_pending) {
+        int rc = input_report_key(dev, INPUT_BTN_0, 0, true, K_MSEC(5));
+        if (rc < 0) { return rc; }
+        data->force_release_pending = false;
+        if (event == TPS43_FORCE_RELEASE) { return rc; }
+    }
+    if (event == TPS43_FORCE_CLICK) {
+        int rc = input_report_key(dev, INPUT_BTN_0, 1, true, K_MSEC(5));
+        if (rc < 0) { return rc; }
+        data->force_release_pending = true;
+        rc = input_report_key(dev, INPUT_BTN_0, 0, true, K_MSEC(5));
+        if (rc >= 0) { data->force_release_pending = false; }
+        return rc;
+    }
     if (event != TPS43_FORCE_NONE) {
         int rc = input_report_key(dev, INPUT_BTN_0, event == TPS43_FORCE_PRESS, true, K_MSEC(5));
+        if (event == TPS43_FORCE_RELEASE && rc < 0) { data->force_release_pending = true; }
         LOG_DBG("Force click %s", event == TPS43_FORCE_PRESS ? "down" : "up");
         return rc;
     }
@@ -65,13 +83,17 @@ static void tps43_force_cancel_and_report(const struct device *dev) {
         input_report_key(dev, INPUT_BTN_TOUCH, 0, true, K_MSEC(5));
     }
     tps43_force_display_report(dev, TOUCAN_TOUCH_NONE, 0, false);
+    if (data->force_release_pending) {
+        k_work_reschedule_for_queue(&data->work_q, &data->force_watchdog,
+                                    K_MSEC(TPS43_FORCE_STALE_MS));
+    }
 }
 
 static void tps43_force_watchdog(struct k_work *work) {
     struct tps43_drv_data *data = CONTAINER_OF(k_work_delayable_from_work(work),
                                               struct tps43_drv_data, force_watchdog);
     k_sem_take(&data->lock, K_FOREVER);
-    if (data->touching || data->force.down) {
+    if (data->touching || data->force.down || data->force_release_pending) {
 #ifdef CONFIG_TOUCAN_FORCE_TRACE
         struct tps43_trace_record trace = {
             .sample_ms = k_uptime_get_32(), .kind = 2,
@@ -592,7 +614,7 @@ static void tps43_work_handler(struct k_work *work) {
                 config->tap_time >= 0 ? config->tap_time : 200,
                 config->three_finger_tap_distance);
         }
-        /* Changing settings never moves a held click's release boundary.
+        /* Changing settings never moves an active pulse's thresholds.
          * The next contact takes one coherent copy of all five levels. */
         if (!drv_data->force.active && !drv_data->force.blocked) {
             struct toucan_force_levels levels;
@@ -619,7 +641,7 @@ static void tps43_work_handler(struct k_work *work) {
         }
         tps43_force_display_report(dev, tps43_force_display_state(&drv_data->force,
                                   num_fingers, valid), strength, valid && num_fingers <= 1);
-        if (is_touching) {
+        if (is_touching || drv_data->force_release_pending) {
             k_work_reschedule_for_queue(&drv_data->work_q, &drv_data->force_watchdog,
                                          K_MSEC(TPS43_FORCE_STALE_MS));
         } else {
@@ -1716,7 +1738,7 @@ static int tps43_init(const struct device *dev) {
             .motion_threshold = DT_INST_PROP(inst, force_click_motion_threshold), \
             .drag_threshold = DT_INST_PROP(inst, force_click_drag_threshold), \
             .motion_settle_ms = DT_INST_PROP(inst, force_click_motion_settle_ms), \
-            .drag_hold_ms = DT_INST_PROP(inst, force_click_drag_hold_ms), \
+            .pulse_delta = DT_INST_PROP(inst, force_click_pulse_delta), \
             .touch_hold_ms = DT_INST_PROP(inst, press_and_hold)                                      \
                 ? DT_INST_PROP_OR(inst, hold_time, 250) : 0,                                       \
         },                                                                                         \
@@ -1781,7 +1803,7 @@ static int tps43_init(const struct device *dev) {
                  "Three finger tap requires streaming force mode");                                \
     BUILD_ASSERT(!DT_INST_PROP(inst, force_click) || (DT_INST_PROP(inst, force_release_level) > 0 && DT_INST_PROP(inst, force_release_level) < DT_INST_PROP(inst, force_lock_level) && DT_INST_PROP(inst, force_lock_level) < DT_INST_PROP(inst, force_press_level)), "Fixed release < lock < press required"); \
     BUILD_ASSERT(!DT_INST_PROP(inst, force_click) || (DT_INST_PROP(inst, force_moving_lock_level) >= DT_INST_PROP(inst, force_lock_level) && DT_INST_PROP(inst, force_moving_press_level) >= DT_INST_PROP(inst, force_press_level) && DT_INST_PROP(inst, force_moving_lock_level) < DT_INST_PROP(inst, force_moving_press_level)), "Invalid moving levels"); \
-    BUILD_ASSERT(!DT_INST_PROP(inst, force_click) || (DT_INST_PROP(inst, force_click_motion_threshold) > 0 && DT_INST_PROP(inst, force_click_drag_threshold) >= DT_INST_PROP(inst, force_click_motion_threshold)), "Invalid motion/drag distance"); \
+    BUILD_ASSERT(!DT_INST_PROP(inst, force_click) || (DT_INST_PROP(inst, force_click_motion_threshold) > 0 && DT_INST_PROP(inst, force_click_drag_threshold) > DT_INST_PROP(inst, force_click_motion_threshold)), "Invalid motion/drag distance"); \
     BUILD_ASSERT(DT_INST_PROP(inst, force_lock_level) >= 0 && DT_INST_PROP(inst, force_lock_level) <= UINT16_MAX, "Invalid sensor range"); \
     BUILD_ASSERT(DT_INST_PROP(inst, force_press_level) >= 0 && DT_INST_PROP(inst, force_press_level) <= UINT16_MAX, "Invalid sensor range"); \
     BUILD_ASSERT(DT_INST_PROP(inst, force_release_level) >= 0 && DT_INST_PROP(inst, force_release_level) <= UINT16_MAX, "Invalid sensor range"); \
@@ -1791,7 +1813,7 @@ static int tps43_init(const struct device *dev) {
     BUILD_ASSERT(DT_INST_PROP(inst, force_click_drag_threshold) >= 0 && DT_INST_PROP(inst, force_click_drag_threshold) <= UINT16_MAX, "Invalid sensor range"); \
     BUILD_ASSERT(DT_INST_PROP(inst, force_click_debounce_ms) >= 0 && DT_INST_PROP(inst, force_click_debounce_ms) <= 1000, "Invalid time"); \
     BUILD_ASSERT(DT_INST_PROP(inst, force_click_motion_settle_ms) >= 0 && DT_INST_PROP(inst, force_click_motion_settle_ms) <= 1000, "Invalid time"); \
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_drag_hold_ms) >= 0 && DT_INST_PROP(inst, force_click_drag_hold_ms) <= 1000, "Invalid time"); \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_pulse_delta) >= 2 && DT_INST_PROP(inst, force_click_pulse_delta) <= 65535, "Invalid pulse delta"); \
     BUILD_ASSERT(!DT_INST_PROP(inst, press_and_hold) || (DT_INST_PROP_OR(inst, hold_time, 250) > 0 && DT_INST_PROP_OR(inst, hold_time, 250) <= 1000), "Invalid hold time");
 
 

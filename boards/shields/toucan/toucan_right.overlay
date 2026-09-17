@@ -69,7 +69,7 @@
         filter-settings=<0x0B>;
         // 정지·저속 구간의 IIR 계수 지정 - 16(강보정) - 32(중간) - 64(약보정)
         filter-dynamic-bottom = <32>;
-        // v14: user-calibrated fixed raw values; never relearn on touchdown.
+        // v20: fixed click floor + 200-unit pulses; no force-to-drag path.
         force-click;
         force-lock-level = <4250>;
         force-press-level = <4500>;
@@ -79,8 +79,8 @@
         force-click-debounce-ms = <8>;
         force-click-motion-settle-ms = <32>;
         force-click-motion-threshold = <6>;
-        force-click-drag-threshold = <48>;
-        force-click-drag-hold-ms = <300>;
+        force-click-drag-threshold = <16>;
+        force-click-pulse-delta = <200>;
         report-rate-active = <8>;
         report-rate-idle-touch = <8>;
         timeout-idle-touch = <255>;
@@ -91,7 +91,7 @@
         three-finger-tap;
         three-finger-tap-distance = <64>;
         single-tap;
-        // 250ms 정지 후 움직이면 드래그. 포스터치와 버튼 상태를 공유합니다.
+        // 250ms 정지 후 움직이면 드래그. 강도 파형 클릭과 별도 경로입니다.
         press-and-hold;
         hold-time = <250>;
         //swipes;

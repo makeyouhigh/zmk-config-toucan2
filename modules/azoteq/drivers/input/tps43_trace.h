@@ -5,7 +5,10 @@
 /* v14 protocol 2: fixed levels are recorded directly. No learned baseline.
  * Little endian, 60 bytes. kind 0=frame, 1=I2C/reset, 2=watchdog.
  * extra bits: valid, software tap, three-tap click, three-tap claimed.
- * rc 32767 means no report attempted. No USB I/O in the sensor producer. */
+ * rc 32767 means no report attempted. No USB I/O in the sensor producer.
+ * v20 keeps the wire layout: flag 11=pulse_ready, bit 8 unused; event 2 is
+ * one complete click (down/up), event +/-1 is hold-drag press/release.
+ * reserved carries the current pulse peak in v20. */
 struct tps43_trace_record {
     uint32_t sample_ms, work_us, io_us;
     uint8_t raw[16];
@@ -23,8 +26,8 @@ void tps43_trace_record(const struct tps43_trace_record *record, bool touching);
 static inline uint16_t tps43_trace_flags(const struct tps43_force_state *s) {
     return (s->active << 0) | (s->blocked << 1) | (s->down << 2) |
         (s->tap_consumed << 3) | (s->candidate << 4) | (s->prepress << 5) |
-        (s->candidate_moving << 6) | (s->dragging << 7) | (s->drag_armed << 8) |
-        (s->suppress_motion << 9) | (s->hold_cancelled << 10);
+        (s->candidate_moving << 6) | (s->dragging << 7) |
+        (s->suppress_motion << 9) | (s->hold_cancelled << 10) | (s->pulse_ready << 11);
 }
 static inline uint16_t tps43_trace_duration(int64_t value) {
     return value < 0 ? 0 : value > 65535 ? 65535 : (uint16_t)value;
@@ -38,5 +41,6 @@ static inline void tps43_trace_state(struct tps43_trace_record *r,
     r->release_level = c->release_level;
     r->pressed_age = s->down ? tps43_trace_duration((int64_t)r->sample_ms-s->pressed_ms) : 0;
     r->candidate_age = s->candidate ? tps43_trace_duration((int64_t)r->sample_ms-s->candidate_ms) : 0;
+    r->reserved = s->peak;
 }
 #endif

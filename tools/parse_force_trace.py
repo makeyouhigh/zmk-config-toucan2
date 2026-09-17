@@ -10,7 +10,7 @@ WIRE_V2 = struct.Struct("<III16s7H7hBBH")
 assert WIRE_V2.size == 60
 FLAG_NAMES_V2 = (
     "active", "blocked", "down", "tap_consumed", "candidate", "prepress",
-    "candidate_moving", "dragging", "drag_armed", "suppress_motion", "hold_cancelled",
+    "candidate_moving", "dragging", "drag_armed", "suppress_motion", "hold_cancelled", "pulse_ready",
 )
 FLAG_NAMES = (
     "active", "ready", "blocked", "down", "tap_consumed", "candidate",
@@ -61,7 +61,7 @@ def parse(document):
     lines = document["lines"]
     header = lines[0].split(",")
     if (len(header) != 7 or header[0] != "DATA" or
-            (header[1], header[2]) not in (("v11","1"),("v12","1"),("v13","1"),("v14","2"),("v15","2"),("v16","2"),("v17","2"),("v18","2"),("v19","2"))):
+            (header[1], header[2]) not in (("v11","1"),("v12","1"),("v13","1"),("v14","2"),("v15","2"),("v16","2"),("v17","2"),("v18","2"),("v19","2"),("v20","2"))):
         raise ValueError("Unexpected trace header/version")
     protocol = int(header[2])
     wire = WIRE if protocol == 1 else WIRE_V2
@@ -78,7 +78,12 @@ def parse(document):
         payload = bytes.fromhex(parts[2])
         if len(payload) != size or checksum(payload) != int(parts[3], 16):
             raise ValueError("Frame size/checksum mismatch")
-        frames.append(decode(payload, start, protocol))
+        frame = decode(payload, start, protocol)
+        if header[1] == "v20":
+            frame["pulse_peak"] = frame["reserved"]
+            frame["event_kind"] = {0: "none", 1: "drag_down", -1: "drag_up",
+                                   2: "click_pair"}.get(frame["event"], "unknown")
+        frames.append(frame)
     times = [f["relative_ms"] for f in frames]
     if any(b < a for a, b in zip(times, times[1:])):
         raise ValueError("Sensor clock out of order")

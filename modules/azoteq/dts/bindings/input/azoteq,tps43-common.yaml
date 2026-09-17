@@ -2,24 +2,24 @@ properties:
   force-click:
     type: boolean
     description: |
-      Fixed absolute Touch Strength thresholds. No touchdown calibration or
-      automatic threshold learning. Physical force units are not implied.
+      Touch Strength pulses above fixed absolute floors. No touchdown-based
+      sensitivity calibration. Physical force units are not implied.
       Normal taps, three-finger taps and initial hold-to-drag remain separate.
 
   force-lock-level:
     type: int
     default: 0
-    description: Fixed stationary raw strength at which squeeze movement is suppressed.
+    description: Fixed stationary floor for suppressing movement during a rising pulse, for at most 120 ms.
 
   force-press-level:
     type: int
     default: 0
-    description: Fixed stationary raw strength required for a left-button press.
+    description: Fixed stationary floor a pulse must reach to qualify for a complete left click on falling strength or lift.
 
   force-release-level:
     type: int
     default: 0
-    description: Release immediately at or below this fixed raw strength. Must be below lock and press. Active drag releases on lift.
+    description: A qualified pulse completes at this fixed level or after force-click-pulse-delta decline from its peak, whichever comes first. Hold drag releases on lift.
 
   force-moving-lock-level:
     type: int
@@ -34,7 +34,7 @@ properties:
   force-click-debounce-ms:
     type: int
     default: 8
-    description: Continuous time at or above the fixed press level. Release has no extra timer.
+    description: Continuous time above the fixed press floor and minimum rise before a pulse qualifies. Falling strength has no extra timer.
 
   force-click-motion-settle-ms:
     type: int
@@ -48,13 +48,13 @@ properties:
 
   force-click-drag-threshold:
     type: int
-    default: 48
-    description: New movement beyond this sensor distance starts an armed drag.
+    default: 16
+    description: Movement beyond this sensor distance starts drag after an initial stationary hold. Greater than force-click-motion-threshold.
 
-  force-click-drag-hold-ms:
+  force-click-pulse-delta:
     type: int
-    default: 300
-    description: Time a force click is held before new travel can latch drag until lift.
+    default: 200
+    description: Fixed minimum raw-strength rise and decline identifying one pulse. No percentage scaling or first-contact calibration. Does not affect hold drag.
 
   rdy-gpios:
     type: phandle-array
@@ -235,10 +235,11 @@ properties:
       Enable press and hold. With force-click enabled, initial stationary contact
       for hold-time arms a software drag. Travel beyond force-click-drag-threshold
       then presses the left button. Movement before the hold interval or a
-      squeeze attempt disables timed hold until lift; pausing later does not
-      rearm it. Holding alone does not click. Initial armed-drag displacement is
-      discarded until the deliberate distance is reached. Force candidates take
-      priority. A completed force click disables timed hold until lift.
+      completed pulse click disables timed hold until lift; pausing later does not
+      rearm it. Holding alone does not click. Pointer movement is not buffered.
+      There is no extra movement-speed deadline after the hold. Strength changes
+      do not arm, cancel or release a hold drag. An unfinished pulse is discarded
+      when the independent hold gesture starts dragging.
       A started drag stays held until
       lift; invalid data, multiple fingers or stale input also release it.
       Without force-click, use the sensor's native press-and-hold gesture.

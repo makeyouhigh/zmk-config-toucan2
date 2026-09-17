@@ -24,6 +24,17 @@ def fixture(start=100, sample=116):
 
 
 class TraceTests(unittest.TestCase):
+    def test_v20_pulse_and_click_pair(self):
+        raw=bytes(16)
+        payload=parser.WIRE_V2.pack(116,900,850,raw,
+            1 | (1<<11),1,4250,4500,4000,0,0,0,0,2,0,32767,32767,0,0,1,5700)
+        data={'lines':['DATA,v20,2,1,0,100,60',
+            f'R,0,{payload.hex()},{parser.checksum(payload):08x}','END,1']}
+        frame=parser.parse(data)['frames'][0]
+        self.assertEqual(frame['before_state'],['active','pulse_ready'])
+        self.assertEqual(frame['event_kind'],'click_pair')
+        self.assertEqual(frame['pulse_peak'],5700)
+
     def test_v14_fixed_levels(self):
         raw = bytearray(16)
         raw[4] = 1
@@ -50,6 +61,8 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(parser.parse(data)['version'], 'v18')
         data['lines'][0] = 'DATA,v19,2,1,0,100,60'
         self.assertEqual(parser.parse(data)['version'], 'v19')
+        data['lines'][0] = 'DATA,v20,2,1,0,100,60'
+        self.assertEqual(parser.parse(data)['version'], 'v20')
         data['lines'][0] = 'DATA,v14,1,1,0,100,60'
         with self.assertRaises(ValueError): parser.parse(data)
 

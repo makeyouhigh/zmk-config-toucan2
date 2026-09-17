@@ -13,8 +13,8 @@
 static const struct tps43_force_config config = {
     .lock_level=4250, .press_level=4500, .release_level=4000,
     .moving_lock_level=4750, .moving_press_level=5000,
-    .debounce_ms=8, .motion_threshold=6, .motion_settle_ms=32,
-    .drag_threshold=48, .drag_hold_ms=300, .touch_hold_ms=250,
+    .debounce_ms=8, .pulse_delta=200, .motion_threshold=6, .motion_settle_ms=32,
+    .drag_threshold=16, .touch_hold_ms=250,
 };
 struct fixture { struct tps43_force_state s; int64_t t; uint16_t x,y; };
 static struct fixture fresh(void) { return (struct fixture){.x=1000,.y=1000}; }
@@ -23,61 +23,70 @@ static int frame(struct fixture *f, uint8_t fingers, uint16_t strength, bool val
     return tps43_force_step(&f->s,&config,f->t,fingers,strength,valid,f->x,f->y);
 }
 static int sample(struct fixture *f, uint16_t strength) { return frame(f,1,strength,true); }
-static void click(struct fixture *f, uint16_t strength) {
+static void qualify(struct fixture *f, uint16_t strength) {
     assert(sample(f,strength)==0);
-    assert(sample(f,strength)==TPS43_FORCE_PRESS);
-    assert(f->s.down && f->s.suppress_motion);
+    assert(sample(f,strength)==0);
+    assert(f->s.pulse_ready && !f->s.down && !f->s.dragging);
 }
-
-static void test_initial_contact_never_changes_levels(void) {
-    const uint16_t initial[]={1,2000,3300,4000,4249,4400};
+static void test_fixed_floors_and_waveform(void) {
+    const uint16_t initial[]={1,2000,3300,4000,4249,4400,5100,9000};
     for (unsigned n=0;n<sizeof(initial)/sizeof(initial[0]);n++) {
         struct fixture f=fresh();
-        for(int i=0;i<150;i++) { assert(sample(&f,initial[n])==0); }
+        for(int i=0;i<150;i++) {
+            assert(sample(&f,initial[n])==0);
+            assert(!f.s.suppress_motion && !f.s.down && !f.s.hold_cancelled);
+        }
         assert(f.s.press_level==4500 && f.s.lock_level==4250);
-        click(&f,4500);
-        assert(sample(&f,4001)==0 && f.s.down);
-        assert(sample(&f,4000)==TPS43_FORCE_RELEASE);
-        assert(frame(&f,0,0,true)==0);
-        click(&f,5500); /* Already firm at first contact still clicks. */
-        assert(f.s.press_level==4500);
-        assert(frame(&f,0,0,true)==TPS43_FORCE_RELEASE);
+        uint16_t peak=initial[n]+300;
+        if(peak<4500) peak=4500;
+        qualify(&f,peak);
+        assert(sample(&f,peak-200)==TPS43_FORCE_CLICK);
+        assert(!f.s.down && !f.s.dragging && f.s.tap_consumed);
+        assert(frame(&f,0,0,true)==0); /* no duplicate ordinary tap */
     }
+    struct fixture f=fresh(); sample(&f,3000);
+    for(int i=0;i<50;i++) assert(sample(&f,4400)==0); /* below click floor */
+    assert(!f.s.suppress_motion); /* prepress lock also expires */
+    qualify(&f,4500);
+    assert(sample(&f,4300)==TPS43_FORCE_CLICK);
+    assert(!f.s.down);
 }
-
-static void test_fixed_hysteresis_and_short_release(void) {
-    struct fixture f=fresh();
-    assert(sample(&f,4250)==0 && f.s.suppress_motion && !f.s.down);
-    assert(sample(&f,4499)==0 && f.s.suppress_motion && !f.s.down);
-    assert(sample(&f,4249)==0 && !f.s.suppress_motion);
-    assert(sample(&f,5500)==0); /* one-sample high spike must not click */
-    assert(sample(&f,3300)==0 && !f.s.down && !f.s.suppress_motion);
-    click(&f,5500);
-    for(int i=0;i<20;i++) assert(sample(&f,4400)==0 && f.s.down);
-    assert(sample(&f,4000)==TPS43_FORCE_RELEASE); /* one frame is sufficient */
-    click(&f,4500); /* second peak can be lower than the first peak */
-    assert(sample(&f,3900)==TPS43_FORCE_RELEASE);
-    assert(sample(&f,3300)==0 && !f.s.suppress_motion);
+static void test_two_peaks_above_release_and_noise(void) {
+    struct fixture f=fresh(); sample(&f,5100);
+    qualify(&f,5800);
+    assert(sample(&f,5500)==TPS43_FORCE_CLICK);
+    for(int i=0;i<4;i++) assert(sample(&f,5400)==0);
+    qualify(&f,5650); /* smaller second peak, never below absolute release */
+    assert(sample(&f,5450)==TPS43_FORCE_CLICK);
+    assert(!f.s.down && !f.s.pulse_ready);
+    for(int i=0;i<200;i++) {
+        assert(sample(&f,i%2?5480:5380)==0);
+        assert(!f.s.down && !f.s.dragging);
+    }
+    assert(frame(&f,0,0,true)==0);
+    sample(&f,3300);
+    assert(sample(&f,5500)==0); /* isolated one-frame spike rejected */
+    assert(sample(&f,3300)==0 && !f.s.pulse_ready);
 }
-
 static void test_repeated_fast_and_slow_clicks(void) {
     const int held_frames[]={2,8,25};
     for(unsigned k=0;k<sizeof(held_frames)/sizeof(held_frames[0]);k++) {
-        struct fixture f=fresh();
+        struct fixture f=fresh(); sample(&f,5100);
+        int clicks=0;
         for(int n=0;n<1000;n++) {
-            int presses=0;
-            for(int i=0;i<held_frames[k];i++) presses+=sample(&f,5200)==TPS43_FORCE_PRESS;
-            assert(presses==1 && f.s.press_level==4500);
-            assert(sample(&f,4000)==TPS43_FORCE_RELEASE);
+            for(int i=0;i<held_frames[k];i++) {
+                assert(sample(&f,5500)==0 && !f.s.down);
+            }
+            clicks+=sample(&f,5100)==TPS43_FORCE_CLICK;
             assert(!f.s.down && !f.s.dragging);
         }
-        assert(sample(&f,3300)==0 && !f.s.suppress_motion);
+        assert(clicks==1000);
+        assert(sample(&f,5100)==0 && !f.s.suppress_motion);
         f.x+=20;
-        assert(sample(&f,3300)==0 && !f.s.suppress_motion && !f.s.down);
+        assert(sample(&f,5100)==0 && !f.s.suppress_motion && !f.s.down);
     }
 }
-
-static void test_moving_profile_and_immediate_motion(void) {
+static void test_moving_profile_and_motion(void) {
     struct fixture f=fresh();
     for(int i=0;i<100;i++) {
         f.x+=3;
@@ -85,78 +94,104 @@ static void test_moving_profile_and_immediate_motion(void) {
     }
     for(int i=0;i<25;i++) {
         f.x+=12;
-        assert(sample(&f,4600)==0 && !f.s.suppress_motion && !f.s.down);
+        assert(sample(&f,4600)==0 && !f.s.suppress_motion);
         assert(f.s.press_level==5000);
     }
-    assert(sample(&f,4750)==0 && f.s.suppress_motion && !f.s.down);
-    f.x+=25; click(&f,5000);
-    assert(f.s.press_level==5000); /* squeeze centroid cannot change profile */
-    assert(sample(&f,4000)==TPS43_FORCE_RELEASE);
+    assert(sample(&f,4750)==0 && f.s.suppress_motion);
+    f.x+=25; qualify(&f,5000);
+    assert(f.s.press_level==5000); /* no profile switch within squeeze */
+    assert(sample(&f,4800)==TPS43_FORCE_CLICK);
     assert(sample(&f,3300)==0 && !f.s.suppress_motion);
-    f=fresh();
-    for(int i=0;i<25;i++) { f.x+=12; assert(sample(&f,3300)==0); }
-    for(int i=0;i<4;i++) assert(sample(&f,3300)==0 && !f.s.suppress_motion);
-    click(&f,4500); assert(f.s.press_level==4500);
-    f=fresh(); assert(sample(&f,3300)==0);
-    f.x+=25; click(&f,4500); /* a stationary squeeze can deform its centroid */
+    for(int i=0;i<4;i++) assert(sample(&f,3300)==0);
+    qualify(&f,4500); assert(f.s.press_level==4500);
+    assert(sample(&f,4300)==TPS43_FORCE_CLICK);
 }
-
-static void test_force_drag_latches_until_lift(void) {
-    struct fixture f=fresh(); click(&f,5200);
-    while(f.t-f.s.pressed_ms<300) {
-        f.x+=4; assert(sample(&f,5200)==0 && !f.s.dragging && f.s.suppress_motion);
+static void test_force_never_drags_or_locks_forever(void) {
+    struct fixture f=fresh(); sample(&f,5100);
+    f.x+=13; sample(&f,5100); /* ordinary travel cancels initial hold */
+    qualify(&f,12000);
+    for(int i=0;i<500;i++) {
+        f.x+=4;
+        assert(sample(&f,12000)==0 && !f.s.down && !f.s.dragging);
+        if(i>=15) {
+            assert(!f.s.suppress_motion);
+            assert(tps43_force_display_state(&f.s,1,true)==TOUCAN_TOUCH_CONTACT);
+        }
     }
-    assert(f.s.drag_armed);
-    f.x+=49; assert(sample(&f,5200)==0 && f.s.dragging && !f.s.suppress_motion);
+    assert(sample(&f,11800)==TPS43_FORCE_CLICK);
     for(int i=0;i<200;i++) {
-        f.x+=1; assert(sample(&f,i%2?3300:0)==0 && f.s.down && !f.s.suppress_motion);
+        f.x+=4; assert(sample(&f,11800)==0 && !f.s.suppress_motion && !f.s.down);
     }
-    assert(frame(&f,0,0,true)==TPS43_FORCE_RELEASE);
-    assert(!f.s.down && !f.s.active);
+    assert(frame(&f,0,0,true)==0);
 }
-
-static void test_initial_hold_and_slow_precision(void) {
+static void test_initial_hold_only_drag(void) {
+    const uint16_t values[]={100,3300,9000};
+    for(unsigned n=0;n<sizeof(values)/sizeof(values[0]);n++) {
+        struct fixture f=fresh(); sample(&f,values[n]);
+        for(int i=0;i<32;i++) assert(sample(&f,values[n])==0 && !f.s.down);
+        /* Slow movement after a completed hold is allowed; no 120 ms deadline. */
+        for(int i=0;i<16;i++) {
+            f.x++;
+            for(int j=0;j<4;j++) assert(sample(&f,values[n])==0);
+        }
+        f.x++;
+        assert(sample(&f,values[n])==TPS43_FORCE_PRESS && f.s.dragging && f.s.down);
+        for(int i=0;i<200;i++) {
+            f.x++; assert(sample(&f,i%2?0:UINT16_MAX)==0 && f.s.down && !f.s.suppress_motion);
+        }
+        assert(frame(&f,0,0,true)==TPS43_FORCE_RELEASE);
+    }
     struct fixture f=fresh();
-    for(int i=0;i<32;i++) assert(sample(&f,3300)==0 && !f.s.suppress_motion);
-    f.x+=10; assert(sample(&f,3300)==0);
-    f.x+=39; assert(sample(&f,3300)==TPS43_FORCE_PRESS && f.s.dragging);
-    assert(sample(&f,100)==0 && f.s.down);
-    assert(frame(&f,0,0,true)==TPS43_FORCE_RELEASE);
-    f=fresh();
     for(int i=0;i<300;i++) {
-        f.x+=1; assert(sample(&f,3300)==0 && !f.s.suppress_motion && !f.s.down);
+        f.x++; assert(sample(&f,3300)==0 && !f.s.suppress_motion && !f.s.down);
     }
-    assert(f.s.hold_cancelled);
-    f=fresh(); for(int i=0;i<33;i++) assert(sample(&f,3300)==0);
-    f.x+=13;
-    for(int i=0;i<30;i++) {
-        if(i%4==0) f.x++;
-        assert(sample(&f,3300)==0 && !f.s.suppress_motion);
-    }
-    f.x+=50; assert(sample(&f,3300)==0 && f.s.hold_cancelled && !f.s.down);
+    assert(f.s.hold_cancelled); /* travel before 250 ms cannot become drag later */
+    for(int i=0;i<50;i++) assert(sample(&f,3300)==0);
+    f.x+=30; assert(sample(&f,3300)==0 && !f.s.dragging);
+    /* Landing strength can rise while the user holds still. It does not cancel
+     * the independent timed hold, even above the configured click floor. */
+    f=fresh(); sample(&f,3300); qualify(&f,5500);
+    for(int i=0;i<32;i++) assert(sample(&f,5500)==0);
+    f.x+=17; assert(sample(&f,5500)==TPS43_FORCE_PRESS && f.s.dragging);
+    assert(!f.s.pulse_ready && !f.s.prepress);
+    assert(sample(&f,3300)==0 && f.s.down);
+    assert(frame(&f,0,0,true)==TPS43_FORCE_RELEASE);
+    /* A completed click cannot unexpectedly arm hold during a double click. */
+    f=fresh(); sample(&f,3300); qualify(&f,5500);
+    assert(sample(&f,5300)==TPS43_FORCE_CLICK);
+    for(int i=0;i<50;i++) assert(sample(&f,5300)==0);
+    f.x+=17; assert(sample(&f,5300)==0 && !f.s.dragging);
 }
-
-static void test_invalid_contact_and_bounds(void) {
+static void test_invalid_lift_and_bounds(void) {
     assert(tps43_force_config_valid(&config));
-    struct tps43_force_config bad=config; bad.release_level=bad.press_level;
+    struct tps43_force_config bad=config; bad.pulse_delta=0;
     assert(!tps43_force_config_valid(&bad));
-    struct fixture f=fresh(); click(&f,UINT16_MAX);
-    assert(frame(&f,2,6000,true)==TPS43_FORCE_RELEASE && f.s.blocked);
-    assert(sample(&f,UINT16_MAX)==0);
+    struct fixture f=fresh(); sample(&f,65000); qualify(&f,UINT16_MAX);
+    assert(sample(&f,65335)==TPS43_FORCE_CLICK); /* no uint16 overflow */
     assert(frame(&f,0,0,true)==0);
-    click(&f,UINT16_MAX);
-    assert(frame(&f,1,5000,false)==TPS43_FORCE_RELEASE);
-    assert(frame(&f,0,0,true)==0); click(&f,5000);
+    sample(&f,3300); qualify(&f,5000);
+    assert(frame(&f,0,0,true)==TPS43_FORCE_CLICK); /* lift completes one pulse */
+    assert(frame(&f,0,0,true)==0);
+    sample(&f,3300); qualify(&f,5000);
+    assert(frame(&f,2,5000,true)==0 && f.s.blocked); /* invalidates pending pulse */
+    assert(frame(&f,0,0,true)==0);
+    sample(&f,3300); qualify(&f,5000);
+    assert(frame(&f,1,5000,false)==0 && f.s.blocked);
+    assert(frame(&f,0,0,true)==0);
+    sample(&f,3300); qualify(&f,5000);
     f.t+=TPS43_FORCE_STALE_MS;
-    assert(sample(&f,5000)==TPS43_FORCE_RELEASE && f.s.blocked);
-    assert(frame(&f,0,0,true)==0); click(&f,5000);
-    assert(tps43_force_display_state(&f.s,1,true)==TOUCAN_TOUCH_PRESSED);
-    assert(sample(&f,4000)==TPS43_FORCE_RELEASE);
-    assert(tps43_force_display_state(&f.s,1,true)==TOUCAN_TOUCH_CONTACT);
+    assert(frame(&f,0,0,true)==0); /* no late click after stale input */
+    sample(&f,3300);
+    for(int i=0;i<32;i++) sample(&f,3300);
+    f.x+=17; assert(sample(&f,3300)==TPS43_FORCE_PRESS);
+    assert(frame(&f,2,5000,true)==TPS43_FORCE_RELEASE);
     assert(frame(&f,0,0,true)==0);
-    assert(tps43_force_display_state(&f.s,0,true)==TOUCAN_TOUCH_NONE);
+    sample(&f,3300);
+    for(int i=0;i<32;i++) sample(&f,3300);
+    f.x+=17; assert(sample(&f,3300)==TPS43_FORCE_PRESS);
+    f.t+=TPS43_FORCE_STALE_MS;
+    assert(sample(&f,3300)==TPS43_FORCE_RELEASE);
 }
-
 static void test_taps_and_force_ownership(void) {
     struct fixture f=fresh(); struct tps43_tap_state tap={0};
     for(int n=0;n<4;n++) {
@@ -167,11 +202,11 @@ static void test_taps_and_force_ownership(void) {
         assert(frame(&f,0,0,true)==0);
         assert(tps43_tap_step(&tap,f.t,0,true,f.s.tap_consumed,f.x,f.y,200,16));
     }
-    for(int i=0;i<3;i++) {
-        sample(&f,5000);
-        assert(!tps43_tap_step(&tap,f.t,1,true,f.s.tap_consumed,f.x,f.y,200,16));
-    }
-    assert(frame(&f,0,0,true)==TPS43_FORCE_RELEASE);
+    sample(&f,3300);
+    tps43_tap_step(&tap,f.t,1,true,f.s.tap_consumed,f.x,f.y,200,16);
+    qualify(&f,5000);
+    assert(!tps43_tap_step(&tap,f.t,1,true,f.s.tap_consumed,f.x,f.y,200,16));
+    assert(frame(&f,0,0,true)==TPS43_FORCE_CLICK);
     assert(!tps43_tap_step(&tap,f.t,0,true,f.s.tap_consumed,f.x,f.y,200,16));
     struct tps43_three_tap_state three={0};
     const uint8_t pattern[]={1,2,3,3,2,1,0};
@@ -188,15 +223,14 @@ static void test_taps_and_force_ownership(void) {
     assert(!tps43_two_finger_motion(3,true));
     assert(tps43_two_finger_motion(2,false));
 }
-
 static void test_trace_contains_actual_fixed_levels(void) {
-    struct fixture f=fresh(); click(&f,5200);
+    struct fixture f=fresh(); sample(&f,3300); qualify(&f,5200);
     struct tps43_trace_record r={.sample_ms=(uint32_t)f.t};
     tps43_trace_state(&r,&f.s,&config);
     assert(r.lock_level==4250 && r.press_level==4500 && r.release_level==4000);
-    assert(r.after_flags&(1<<2));
+    assert(r.after_flags&(1<<11)); /* pending pulse, no held button */
+    assert(!(r.after_flags&((1<<2)|(1<<8))));
 }
-
 static void test_three_tap_rejection_and_missing_first_slot(void) {
     struct tps43_three_tap_state s={0};
     assert(tps43_three_tap_step(&s,0,3,true,false,500,500,200,64).claimed);
@@ -247,13 +281,13 @@ static void test_adjustable_levels(void) {
     assert(runtime.press_level==4600 && runtime.moving_press_level==5100);
     assert(runtime.touch_hold_ms==250 && runtime.debounce_ms==8);
     struct tps43_force_state s={0};
-    assert(tps43_force_step(&s,&runtime,0,1,4500,true,1000,1000)==0);
+    assert(tps43_force_step(&s,&runtime,0,1,4000,true,1000,1000)==0);
     assert(tps43_force_step(&s,&runtime,8,1,4500,true,1000,1000)==0 && !s.down);
     assert(tps43_force_step(&s,&runtime,16,1,4600,true,1000,1000)==0);
-    assert(tps43_force_step(&s,&runtime,24,1,4600,true,1000,1000)==TPS43_FORCE_PRESS);
+    assert(tps43_force_step(&s,&runtime,24,1,4600,true,1000,1000)==0 && s.pulse_ready);
     assert(toucan_force_levels_adjust(&v,FORCE_RELEASE_DOWN,100));
     /* Pending settings leave the active contact's release boundary unchanged. */
-    assert(tps43_force_step(&s,&runtime,32,1,4000,true,1000,1000)==TPS43_FORCE_RELEASE);
+    assert(tps43_force_step(&s,&runtime,32,1,4000,true,1000,1000)==TPS43_FORCE_CLICK);
     assert(tps43_force_step(&s,&runtime,40,0,0,true,1000,1000)==0);
     tps43_force_set_levels(&runtime,&v);
     assert(runtime.release_level==3900);
@@ -319,19 +353,12 @@ static void test_force_status_transfer(void) {
 }
 
 int main(void) {
-    test_force_limits();
-    test_force_status_transfer();
-    test_adjustable_levels();
-    test_initial_contact_never_changes_levels();
-    test_fixed_hysteresis_and_short_release();
-    test_repeated_fast_and_slow_clicks();
-    test_moving_profile_and_immediate_motion();
-    test_force_drag_latches_until_lift();
-    test_initial_hold_and_slow_precision();
-    test_invalid_contact_and_bounds();
-    test_taps_and_force_ownership();
-    test_trace_contains_actual_fixed_levels();
-    test_three_tap_rejection_and_missing_first_slot();
-    puts("Fixed-level force, 3000 repeated clicks, drag, hold, tap and trace tests passed");
+    test_force_limits(); test_force_status_transfer(); test_adjustable_levels();
+    test_fixed_floors_and_waveform(); test_two_peaks_above_release_and_noise();
+    test_repeated_fast_and_slow_clicks(); test_moving_profile_and_motion();
+    test_force_never_drags_or_locks_forever(); test_initial_hold_only_drag();
+    test_invalid_lift_and_bounds(); test_taps_and_force_ownership();
+    test_trace_contains_actual_fixed_levels(); test_three_tap_rejection_and_missing_first_slot();
+    puts("3000 pulse clicks, high valleys/plateaus, independent 250 ms hold, taps and trace passed");
     return 0;
 }

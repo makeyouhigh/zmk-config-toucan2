@@ -287,6 +287,7 @@ struct tps43_drv_data {
     uint8_t force_display_state;
     uint8_t event_config;
     bool force_streaming;
+    bool force_release_pending;
 
     bool initialized;
     bool drag_active;

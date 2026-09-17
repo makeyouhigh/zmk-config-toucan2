@@ -15,8 +15,9 @@ jobs:
           python3 tests/trace_parser_test.py
           python3 tests/force_status_integration_test.py
           python3 tests/force_display_test.py
+          python3 tests/force_report_test.py
   build:
     needs: force-click-tests
     uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@v0.3
     with:
-      archive_name: firmware-v19
+      archive_name: firmware-v20
