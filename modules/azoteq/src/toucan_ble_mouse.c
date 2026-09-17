@@ -3,16 +3,17 @@
 #include <zephyr/kernel.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
-#include <zephyr/sys/atomic.h>
 #include <zephyr/logging/log.h>
 #include <zmk/ble.h>
 #include <zmk/hid.h>
 #include <toucan/mouse_queue.h>
 #include <toucan/ble_mouse_policy.h>
+#include <toucan/mouse_window.h>
 
 LOG_MODULE_REGISTER(toucan_ble_mouse, CONFIG_ZMK_LOG_LEVEL);
 BUILD_ASSERT(CONFIG_BT_PERIPHERAL_PREF_MAX_INT == TOUCAN_MOUSE_CONN_INTERVAL);
 BUILD_ASSERT(CONFIG_BT_PERIPHERAL_PREF_LATENCY == 0);
+BUILD_ASSERT(CONFIG_ZMK_DISPLAY_DEDICATED_THREAD_PRIORITY > CONFIG_ZMK_BLE_THREAD_PRIORITY);
 
 /* Pinned to ZMK v0.3: this is the same mouse report attribute used by hog.c.
  * Reuse the existing encrypted HID service and report descriptor. */
@@ -25,9 +26,8 @@ struct peer_queue {
 };
 static struct peer_queue peers[CONFIG_BT_MAX_CONN];
 static struct k_spinlock queue_lock;
-static atomic_t awaiting_tag;
+static struct toucan_mouse_window transmit_window;
 K_SEM_DEFINE(mouse_pending, 0, 1);
-K_SEM_DEFINE(mouse_completed, 0, 1);
 
 /* Called by the normal input listener. Unlike stock hog.c, no 100 ms queue
  * wait and no recursive overflow retry can stall the input thread here. */
@@ -56,8 +56,11 @@ int __wrap_zmk_hog_send_mouse_report(struct zmk_hid_mouse_report_body *report) {
 
 static void mouse_sent(struct bt_conn *conn, void *user_data) {
     ARG_UNUSED(conn);
-    if (atomic_cas(&awaiting_tag, (atomic_val_t)(uintptr_t)user_data, 0)) {
-        k_sem_give(&mouse_completed);
+    k_spinlock_key_t key = k_spin_lock(&queue_lock);
+    bool completed = toucan_mouse_window_complete(&transmit_window, (uint32_t)(uintptr_t)user_data);
+    k_spin_unlock(&queue_lock, key);
+    if (completed) {
+        k_sem_give(&mouse_pending);
     }
 }
 
@@ -105,28 +108,31 @@ static void mouse_disconnected(struct bt_conn *conn, uint8_t reason) {
         release = peer->conn;
         *peer = (struct peer_queue){0};
     }
+    toucan_mouse_window_disconnect(&transmit_window, (uintptr_t)conn);
     k_spin_unlock(&queue_lock, key);
     if (release) {
         bt_conn_unref(release);
     }
-    k_sem_give(&mouse_completed);
+    k_sem_give(&mouse_pending);
 }
 
 BT_CONN_CB_DEFINE(toucan_mouse_conn_callbacks) = {.disconnected = mouse_disconnected};
 
 static void mouse_sender(void *a, void *b, void *c) {
     ARG_UNUSED(a); ARG_UNUSED(b); ARG_UNUSED(c);
-    uint32_t tag = 0;
     unsigned int next_peer = 0;
     for (;;) {
         struct toucan_mouse_packet p;
         struct bt_conn *conn = NULL;
+        uint32_t tag = 0;
         k_spinlock_key_t key = k_spin_lock(&queue_lock);
-        for (unsigned int n = 0; n < ARRAY_SIZE(peers); n++) {
+        for (unsigned int n = 0; n < ARRAY_SIZE(peers) &&
+             toucan_mouse_window_available(&transmit_window); n++) {
             unsigned int index = (next_peer + n) % ARRAY_SIZE(peers);
             if (peers[index].conn &&
                 toucan_mouse_pop(&peers[index].reports, &p, k_uptime_get())) {
                 conn = bt_conn_ref(peers[index].conn);
+                tag = toucan_mouse_window_acquire(&transmit_window, (uintptr_t)conn);
                 next_peer = (index + 1U) % ARRAY_SIZE(peers);
                 break;
             }
@@ -147,9 +153,6 @@ static void mouse_sender(void *a, void *b, void *c) {
             .buttons = p.buttons, .d_x = p.x, .d_y = p.y,
             .d_scroll_y = p.wheel, .d_scroll_x = p.pan,
         };
-        tag = (tag + 1U) & INT32_MAX;
-        if (!tag) { tag = 1; }
-        atomic_set(&awaiting_tag, tag);
         struct bt_gatt_notify_params params = {
             .attr = &hog_svc.attrs[13], .data = &report, .len = sizeof(report),
             .func = mouse_sent, .user_data = (void *)(uintptr_t)tag,
@@ -158,13 +161,15 @@ static void mouse_sender(void *a, void *b, void *c) {
          * queue. Isolate that wait on this thread, away from input, key HID,
          * sensor, layer recovery and display processing. */
         int err = bt_gatt_notify_cb(conn, &params);
-        if (!err) {
-            /* At most one mouse notification is in the Bluetooth stack.
-             * New movement merges while it is in flight; edges stay ordered. */
-            while ((uint32_t)atomic_get(&awaiting_tag) == tag && connected(conn)) {
-                k_sem_take(&mouse_completed, K_MSEC(25));
-            }
-        } else if (err == -ENOMEM || err == -EAGAIN || err == -EPERM) {
+        /* Keep a second notification ready while the preceding completion
+         * callback is pending. Stop-and-wait can leave the next event empty;
+         * host arrivals measured 30 ms on a 15 ms link. Never exceed two in flight. */
+        if (err) {
+            key = k_spin_lock(&queue_lock);
+            toucan_mouse_window_complete(&transmit_window, tag);
+            k_spin_unlock(&queue_lock, key);
+        }
+        if (err == -ENOMEM || err == -EAGAIN || err == -EPERM) {
             if (err == -EPERM) {
                 bt_conn_set_security(conn, BT_SECURITY_L2);
             }

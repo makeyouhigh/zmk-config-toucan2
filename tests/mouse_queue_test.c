@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <toucan/mouse_queue.h>
 #include <toucan/ble_mouse_policy.h>
+#include <toucan/mouse_window.h>
 
 static struct toucan_mouse_packet packet(int64_t t, uint16_t buttons, int16_t x) {
     return (struct toucan_mouse_packet){.buttons=buttons, .x=x, .y=-x, .motion_ms=t};
@@ -74,7 +75,99 @@ static void test_retry_disconnect_overflow(void) {
     assert(toucan_mouse_add(INT16_MAX,1)==INT16_MAX);
     assert(toucan_mouse_add(INT16_MIN,-1)==INT16_MIN);
 }
+static void test_completion_epochs(void) {
+    struct toucan_mouse_window w = {0};
+    uint32_t a = toucan_mouse_window_acquire(&w, 10);
+    uint32_t b = toucan_mouse_window_acquire(&w, 20);
+    assert(a && b && a != b);
+    assert(!toucan_mouse_window_available(&w));
+    assert(!toucan_mouse_window_acquire(&w, 10));
+    toucan_mouse_window_disconnect(&w, 10);
+    uint32_t c = toucan_mouse_window_acquire(&w, 10);
+    assert(c && c != a);
+    assert(!toucan_mouse_window_complete(&w, a)); /* Old connection callback. */
+    assert(!toucan_mouse_window_available(&w));
+    assert(toucan_mouse_window_complete(&w, b)); /* Other peer unaffected. */
+    assert(!toucan_mouse_window_complete(&w, b)); /* Duplicate completion. */
+    assert(toucan_mouse_window_complete(&w, c));
+    assert(!toucan_mouse_window_complete(&w, 0));
+    w.generation = 0x3fffffffU;
+    a = toucan_mouse_window_acquire(&w, 10);
+    assert(a && a <= INT32_MAX);
+    assert(toucan_mouse_window_complete(&w, a));
+}
+
+/* 125 Hz sensor, one air report per 15 ms event, notification completion one
+ * event later. Exercise actual coalescing/window helpers, button order and a
+ * 315 ms transport pause. This is a transport model, not a hardware result. */
+static int simulate_window(unsigned int limit, bool stall) {
+    struct toucan_mouse_window w = {0};
+    struct toucan_mouse_queue q = {0};
+    struct { uint32_t token; int completed_at; struct toucan_mouse_packet p; } tx[2] = {0};
+    int next_send = 15, reports = 0, total = 0, sent_total = 0;
+    unsigned int in_flight = 0;
+    uint16_t delivered_buttons = 0;
+    int transitions = 0;
+    for (int t = 0; t < 3000; t++) {
+        for (unsigned int i = 0; i < 2; i++) {
+            if (tx[i].token && tx[i].completed_at <= t) {
+                assert(toucan_mouse_window_complete(&w, tx[i].token));
+                tx[i].token = 0;
+                in_flight--;
+            }
+        }
+        if (t < 2400 && t % 8 == 0) {
+            uint16_t buttons = ((t >= 960 && t < 1040) || (t >= 1120 && t < 1200));
+            toucan_mouse_push(&q, packet(t, buttons, 2), t);
+            total += 2;
+        }
+        for (unsigned int i = 0; i < 2 && in_flight < limit && q.count; i++) {
+            if (tx[i].token) { continue; }
+            struct toucan_mouse_packet p;
+            assert(toucan_mouse_pop(&q, &p, t));
+            uint32_t token = toucan_mouse_window_acquire(&w, 10);
+            assert(token);
+            int air = next_send > t ? next_send : ((t / 15) + 1) * 15;
+            if (stall && air >= 900 && air < 1215) { air = 1215; }
+            next_send = air + 15;
+            tx[i].token = token;
+            tx[i].completed_at = air + 15;
+            tx[i].p = p;
+            in_flight++;
+            sent_total += p.x;
+            reports++;
+            if (p.buttons != delivered_buttons) {
+                transitions++;
+                delivered_buttons = p.buttons;
+            }
+        }
+        assert(in_flight <= limit && in_flight <= TOUCAN_MOUSE_IN_FLIGHT);
+        assert(q.count <= 5); /* Two force clicks during the transport pause. */
+    }
+    assert(!in_flight && !q.count);
+    if (!stall) {
+        assert(sent_total == total);
+    } else {
+        /* Old movement attached to earlier button edges expires while the
+         * newest movement stays fresh. Do not replay the old path on recovery. */
+        assert(sent_total > 0 && sent_total <= total);
+    }
+    assert(transitions == 4 && delivered_buttons == 0);
+    return reports;
+}
+
+static void test_pipelined_delivery(void) {
+    test_completion_epochs();
+    int single = simulate_window(1, false);
+    int pipelined = simulate_window(2, false);
+    assert(pipelined > single * 18 / 10);
+    assert(simulate_window(2, true) > 0);
+    printf("15 ms link model: one slot %d reports, two slots %d reports; stalled click ordering passed\n",
+           single, pipelined);
+}
+
 int main(void) {
+    test_pipelined_delivery();
     test_continuous_motion();
     test_edges_and_drag();
     test_retry_disconnect_overflow();
