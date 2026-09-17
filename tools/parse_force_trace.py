@@ -1,4 +1,4 @@
-"""Validate v11/v12 RAM trace transfer and decode sensor/state frames."""
+"""Validate v11/v12/v13 RAM trace transfer and decode sensor/state frames."""
 import argparse
 import json
 import struct
@@ -50,7 +50,7 @@ def parse(document):
     lines = document["lines"]
     header = lines[0].split(",")
     if (len(header) != 7 or header[0] != "DATA" or
-            header[1] not in ("v11", "v12") or header[2] != "1"):
+            header[1] not in ("v11", "v12", "v13") or header[2] != "1"):
         raise ValueError("Unexpected trace header/version")
     count, full, start, size = map(int, header[3:])
     if size != WIRE.size or count > 1536 or count < 0:

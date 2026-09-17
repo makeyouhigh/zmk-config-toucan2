@@ -89,10 +89,10 @@ static void trace_thread(void *a, void *b, void *c) {
                 full = false;
                 started_ms = now;
                 capturing = true;
-                snprintk(line, sizeof(line), "ARM,v12,1,%u,%u\n", started_ms, TRACE_MS);
+                snprintk(line, sizeof(line), "ARM,v13,1,%u,%u\n", started_ms, TRACE_MS);
             }
         } else if (command == 'S') {
-            snprintk(line, sizeof(line), "STATUS,v12,1,%u,%u,%u,%u,%u,%u,%u\n",
+            snprintk(line, sizeof(line), "STATUS,v13,1,%u,%u,%u,%u,%u,%u,%u\n",
                      capturing, touching, count, full, started_ms, now,
                      (unsigned)sizeof(record));
         } else if (command == 'D') {
@@ -100,7 +100,7 @@ static void trace_thread(void *a, void *b, void *c) {
                 snprintk(line, sizeof(line), "BUSY\n");
             } else {
                 cursor = 0;
-                snprintk(line, sizeof(line), "DATA,v12,1,%u,%u,%u,%u\n",
+                snprintk(line, sizeof(line), "DATA,v13,1,%u,%u,%u,%u\n",
                          count, full, started_ms, (unsigned)sizeof(record));
             }
         } else if (command == 'N') {

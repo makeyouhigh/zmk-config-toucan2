@@ -213,6 +213,7 @@ struct tps43_config {
     struct tps43_force_config force;
     bool two_finger_tap;
     bool three_finger_tap;
+    uint16_t three_finger_tap_distance;
     bool scroll;
     bool zoom;
     bool swipes;

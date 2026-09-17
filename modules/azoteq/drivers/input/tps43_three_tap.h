@@ -8,6 +8,11 @@ struct tps43_three_tap_state {
     int64_t started_ms, last_sample_ms;
 };
 struct tps43_three_tap_result { bool click, claimed; };
+/* The force lift frame preserves tap_consumed to suppress a same-frame tap.
+ * That marker does not belong to the next contact. */
+static inline bool tps43_three_tap_consumed(const struct tps43_force_state *force) {
+    return force->active && (force->down || force->tap_consumed);
+}
 static inline void tps43_three_tap_cancel(struct tps43_three_tap_state *s) {
     s->blocked = true;
 }

@@ -584,13 +584,12 @@ static void tps43_work_handler(struct k_work *work) {
         bool valid = contact_valid && (num_fingers == 0 || position_valid);
         is_touching = is_touching && contact_valid;
         if (config->three_finger_tap) {
-            bool consumed = drv_data->force.down ||
-                (drv_data->force.tap_consumed && !drv_data->force.blocked);
+            bool consumed = tps43_three_tap_consumed(&drv_data->force);
             three_tap = tps43_three_tap_step(&drv_data->three_tap, sample_ms,
                 num_fingers, contact_valid, consumed,
                 position_valid ? x : UINT16_MAX, position_valid ? y : UINT16_MAX,
                 config->tap_time >= 0 ? config->tap_time : 200,
-                config->tap_distance >= 0 ? config->tap_distance : 16);
+                config->three_finger_tap_distance);
         }
         enum tps43_force_event force_event = tps43_force_step(&drv_data->force, &config->force,
                                                sample_ms, num_fingers, strength, valid, x, y);
@@ -1718,6 +1717,7 @@ static int tps43_init(const struct device *dev) {
         },                                                                                         \
         .two_finger_tap = DT_INST_PROP(inst, two_finger_tap),                                        \
         .three_finger_tap = DT_INST_PROP(inst, three_finger_tap),                                    \
+        .three_finger_tap_distance = DT_INST_PROP(inst, three_finger_tap_distance),                  \
         .scroll = DT_INST_PROP(inst, scroll),                                                        \
         .zoom = DT_INST_PROP(inst, zoom),                                                            \
         .swipes = DT_INST_PROP(inst, swipes),                                                        \

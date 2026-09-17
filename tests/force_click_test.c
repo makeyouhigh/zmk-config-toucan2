@@ -498,7 +498,7 @@ static void touch_hold_rest(struct fixture *f, int64_t end) {
 }
 static void test_touch_hold_boundary_and_latch(void) {
     struct fixture f=fresh(); touch_hold_rest(&f,248);
-    f.x+=7; assert(touch_hold_frame(&f,249,1,1000,true)==0);
+    f.x+=13; assert(touch_hold_frame(&f,249,1,1000,true)==0);
     assert(!f.s.down && f.s.hold_cancelled);
     for (int64_t t=257;t<499;t+=8) assert(touch_hold_frame(&f,t,1,1000,true)==0);
     f.x+=49; assert(touch_hold_frame(&f,499,1,1000,true)==0 && !f.s.down);
@@ -807,7 +807,7 @@ static void test_v10_slow_precision_never_rearms_hold(void) {
 static void test_v10_hold_requires_deliberate_distance(void) {
     struct fixture f=fresh(); touch_hold_rest(&f,248);
     f.x+=6; assert(touch_hold_frame(&f,250,1,1000,true)==0 && !f.s.suppress_motion);
-    f.x++; assert(touch_hold_frame(&f,258,1,1000,true)==0 && f.s.suppress_motion);
+    f.x++; assert(touch_hold_frame(&f,258,1,1000,true)==0 && !f.s.suppress_motion);
     f.x+=41; assert(touch_hold_frame(&f,266,1,1000,true)==0 && !f.s.down);
     f.x++; assert(touch_hold_frame(&f,274,1,1000,true)==TPS43_FORCE_PRESS);
     assert(f.s.dragging && !f.s.suppress_motion);
@@ -819,9 +819,11 @@ static void test_v10_hold_requires_deliberate_distance(void) {
         f.x=(uint16_t)(1000+(t%16 ? 20 : -20));
         assert(touch_hold_frame(&f,t,1,1000,true)==0 && !f.s.down);
     }
+    /* Travel has cancelled hold. Let the ordinary moving-force window settle. */
+    for (int i=0;i<5;i++) assert(touch_hold_frame(&f,f.t+8,1,1000,true)==0);
     for (int i=0;i<3;i++)
         assert(touch_hold_frame(&f,f.t+8,1,1100,true)==(i==2 ? 1 : 0));
-    assert(!f.s.dragging); /* A squeeze overrides an armed but unstarted hold. */
+    assert(!f.s.dragging); /* Force click remains usable after hold cancellation. */
 }
 
 static void test_v10_repeat_rise_precedes_coordinate_cancel(void) {
@@ -901,7 +903,70 @@ static void test_v12_three_tap_first_slot_lifts(void) {
     assert(!three_frame(&s,100,0,0).click); /* Palm/invalid contact is still rejected. */
 }
 
+static void test_v13_three_finger_centroid_tolerance(void) {
+    struct tps43_three_tap_state s={0};
+    tps43_three_tap_step(&s,0,3,true,false,1000,1000,200,64);
+    tps43_three_tap_step(&s,40,3,true,false,1054,945,200,64);
+    tps43_three_tap_step(&s,80,3,true,false,1059,941,200,64);
+    assert(tps43_three_tap_step(&s,120,0,true,false,0,0,200,64).click);
+    s=(struct tps43_three_tap_state){0};
+    tps43_three_tap_step(&s,0,3,true,false,1000,1000,200,64);
+    tps43_three_tap_step(&s,40,3,true,false,1065,1000,200,64);
+    assert(!tps43_three_tap_step(&s,120,0,true,false,0,0,200,64).click);
+}
+
+static void test_v13_contact_lifecycle(void) {
+    struct tps43_force_state force={0}; struct tps43_three_tap_state three={0};
+    /* Use driver ordering, not an isolated three-tap recognizer. */
+    for (int n=0;n<5;n++) {
+        int clicks=0;
+        for (int t=0;t<=120;t+=8) {
+            uint8_t fingers=t==120 ? 0 : 3;
+            struct tps43_three_tap_result v=tps43_three_tap_step(&three,n*300+t,
+                fingers,true,tps43_three_tap_consumed(&force),1000,1000,200,16);
+            tps43_force_step(&force,&config,n*300+t,fingers,fingers?5000:0,true,1000,1000);
+            clicks+=v.click;
+        }
+        assert(clicks==1);
+    }
+    struct fixture f=fresh(); rest(&f,5000); press(&f,5600);
+    assert(tps43_three_tap_consumed(&f.s));
+    send_frame(&f,0,0,true);
+    assert(f.s.tap_consumed && !tps43_three_tap_consumed(&f.s));
+}
+static void test_v13_hold_landing_drift_and_slow_travel(void) {
+    for (int direction=-1;direction<=1;direction+=2) {
+        struct fixture f=fresh();
+        for (int t=0;t<=1000;t+=8) {
+            f.x=(uint16_t)(1000+direction*(t<80 ? t/8 : 10));
+            assert(touch_hold_frame(&f,t,1,1000,true)==0);
+            assert(!f.s.hold_cancelled && !f.s.suppress_motion);
+        }
+        f.x=(uint16_t)(1000+direction*49);
+        assert(touch_hold_frame(&f,1008,1,1000,true)==TPS43_FORCE_PRESS);
+        assert(f.s.dragging);
+        assert(touch_hold_frame(&f,1016,0,0,true)==TPS43_FORCE_RELEASE);
+    }
+    struct fixture f=fresh(); touch_hold_rest(&f,248);
+    /* Normal contact drift below the pre-click threshold still permits hold. */
+    assert(touch_hold_frame(&f,256,1,1040,true)==0);
+    f.x+=49;
+    assert(touch_hold_frame(&f,264,1,1040,true)==TPS43_FORCE_PRESS);
+    /* Deliberate movement after the hold has a bounded decision, without
+     * freezing slow precision travel or promoting it into a late drag. */
+    f=fresh(); touch_hold_rest(&f,248); f.x+=13;
+    for (int t=256;t<=456;t+=8) {
+        if (t%32==0) f.x++;
+        assert(touch_hold_frame(&f,t,1,1000,true)==0 && !f.s.suppress_motion);
+    }
+    assert(f.s.hold_cancelled); f.x+=80;
+    assert(touch_hold_frame(&f,464,1,1000,true)==0 && !f.s.down);
+}
+
 int main(void) {
+    test_v13_three_finger_centroid_tolerance();
+    test_v13_contact_lifecycle();
+    test_v13_hold_landing_drift_and_slow_travel();
     test_v12_shallow_fast_rebound();
     test_v12_three_tap_first_slot_lifts();
     test_v10_quick_release_and_trough();

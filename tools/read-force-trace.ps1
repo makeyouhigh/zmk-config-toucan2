@@ -29,7 +29,7 @@ try {
     Start-Sleep -Milliseconds 300
     $serial.DiscardInBuffer()
     $status = Request-Line 'S'
-    if ($status -notmatch '^STATUS,(v11|v12),1,') {
+    if ($status -notmatch '^STATUS,(v11|v12|v13),1,') {
         throw "Unexpected firmware: $status"
     }
     $version = $Matches[1]
