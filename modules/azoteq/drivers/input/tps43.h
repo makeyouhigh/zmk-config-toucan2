@@ -9,8 +9,6 @@
 #include "tps43_force.h"
 #include "tps43_tap.h"
 #include "tps43_three_tap.h"
-#include "tps43_contact.h"
-#include <toucan/diagnostics.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -85,7 +83,6 @@ extern "C" {
 /* XY configuration */
 // Read-write
 #define TPS43_REG_XY_CONFIG_0       0x0669  /* 1 byte */
-#define TPS43_REG_MAX_MULTI_TOUCHES 0x066A  /* 1 byte, up to five tracked fingers */
 
 /* Gesture configuration */
 // Read-write // Low-level gesture configuration
@@ -215,8 +212,6 @@ struct tps43_config {
     struct tps43_force_config force;
     bool two_finger_tap;
     bool three_finger_tap;
-    uint16_t three_finger_tap_ms;
-    uint16_t three_finger_tap_distance;
     bool scroll;
     bool zoom;
     bool swipes;
@@ -287,18 +282,9 @@ struct tps43_drv_data {
     struct tps43_three_tap_state three_tap;
     int64_t force_display_report_ms;
     uint8_t force_display_state;
-    uint32_t diag_live[TOUCAN_DIAG_SOURCE_WORDS];
-    uint32_t diag_snapshot[TOUCAN_DIAG_SOURCE_WORDS];
-    uint32_t diag_sequence;
-    uint8_t diag_phase;
-    uint8_t diag_max_fingers;
-    bool diag_three_claimed;
-    bool diag_middle_generated;
-    int64_t diag_next_ms;
     uint8_t event_config;
     bool force_streaming;
 
-    bool device_ready;
     bool initialized;
     bool drag_active;
     bool suspended;

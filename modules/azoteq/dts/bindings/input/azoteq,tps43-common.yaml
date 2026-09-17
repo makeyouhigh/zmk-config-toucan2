@@ -110,14 +110,6 @@ properties:
       cancels this window. Does not defer any button event or move the cursor.
       Must be between 0 and 1000 milliseconds. Zero disables repeat assistance.
 
-  force-click-repeat-motion-threshold:
-    type: int
-    default: 12
-    description: |
-      Bounded centroid drift allowed between repeated force clicks, in sensor
-      units. This small zone keeps the click position still. Crossing its
-      boundary immediately restores ordinary motion and moving thresholds.
-
   rdy-gpios:
     type: phandle-array
     required: false
@@ -240,19 +232,9 @@ properties:
     type: boolean
     description: |
       With force-click enabled, recognize a three-finger tap in software and
-      emit one middle-button click when all fingers lift. Uses three-finger-tap-ms
-      and three-finger-tap-distance. Holds and swipes
+      emit one middle-button click when all fingers lift. Uses tap-time and
+      tap-distance, defaulting to 200 ms and 16 sensor units. Holds and swipes
       do not click. Suppresses other tap buttons for that contact.
-
-  three-finger-tap-ms:
-    type: int
-    default: 300
-    description: Maximum duration from first contact to final lift for a three-finger tap.
-
-  three-finger-tap-distance:
-    type: int
-    default: 48
-    description: Allowed sensor displacement while the finger count is unchanged during a three-finger tap.
 
   scroll:
     type: boolean

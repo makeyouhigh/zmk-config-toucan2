@@ -7,7 +7,6 @@
 
 /* Shared by the device driver and the host-side behavioural tests. */
 #define TPS43_FORCE_STALE_MS 250
-#define TPS43_FORCE_STOP_MS 16
 /* Keep v4's 24 * 3 squeeze travel limit independent of drag sensitivity.
  * Raising the drag threshold must not also admit moving false clicks. */
 #define TPS43_FORCE_PRESS_TRAVEL_LIMIT 72U
@@ -33,7 +32,6 @@ struct tps43_force_config {
     uint16_t motion_settle_ms;
     uint16_t drag_hold_ms;
     uint16_t repeat_ms;
-    uint16_t repeat_motion_threshold;
 };
 
 struct tps43_force_state {
@@ -56,7 +54,6 @@ struct tps43_force_state {
     int64_t candidate_ms;
     int64_t quiet_until_ms;
     int64_t motion_until_ms;
-    int64_t motion_window_ms;
     int64_t pressed_ms;
     int64_t repeat_until_ms;
     uint64_t strength_sum;
@@ -68,8 +65,6 @@ struct tps43_force_state {
     int32_t baseline_q8;
     uint16_t strength_min;
     uint16_t strength_max;
-    uint16_t anchor_x;
-    uint16_t anchor_y;
     uint16_t candidate_x;
     uint16_t candidate_y;
     uint16_t drag_x;
@@ -78,8 +73,6 @@ struct tps43_force_state {
     uint16_t previous_y;
     uint16_t motion_x;
     uint16_t motion_y;
-    uint16_t repeat_x;
-    uint16_t repeat_y;
 };
 
 static inline enum tps43_force_event
@@ -128,7 +121,7 @@ tps43_force_display_state(const struct tps43_force_state *state, uint8_t fingers
 
 /* Re-establish the resting level after movement or unstable initial contact. */
 static inline void tps43_force_window(struct tps43_force_state *state, int64_t now_ms,
-                                      uint16_t strength, uint16_t x, uint16_t y) {
+                                      uint16_t strength) {
     state->ready = false;
     state->candidate = false;
     state->window_ms = now_ms;
@@ -138,8 +131,6 @@ static inline void tps43_force_window(struct tps43_force_state *state, int64_t n
     state->strength_max = strength;
     state->baseline = strength;
     state->baseline_q8 = (int32_t)strength * 256;
-    state->anchor_x = x;
-    state->anchor_y = y;
 }
 
 static inline enum tps43_force_event
@@ -177,10 +168,9 @@ tps43_force_step(struct tps43_force_state *state,
         state->active = true;
         state->tap_consumed = false;
         state->started_ms = now_ms;
-        state->motion_window_ms = now_ms;
         state->previous_x = state->motion_x = x;
         state->previous_y = state->motion_y = y;
-        tps43_force_window(state, now_ms, strength, x, y);
+        tps43_force_window(state, now_ms, strength);
         return TPS43_FORCE_NONE;
     }
 
@@ -203,7 +193,6 @@ tps43_force_step(struct tps43_force_state *state,
     state->previous_dx = dx;
     state->previous_dy = dy;
     if (moving) {
-        state->motion_window_ms = now_ms;
         state->motion_x = x;
         state->motion_y = y;
     }
@@ -215,7 +204,7 @@ tps43_force_step(struct tps43_force_state *state,
         uint16_t high = strength > state->strength_max ? strength : state->strength_max;
         uint32_t tolerance = tps43_force_threshold(state->baseline, 16, 3);
         if ((uint32_t)high - low > tolerance) {
-            tps43_force_window(state, now_ms, strength, x, y);
+            tps43_force_window(state, now_ms, strength);
             return TPS43_FORCE_NONE;
         }
         state->strength_min = low;
@@ -238,25 +227,10 @@ tps43_force_step(struct tps43_force_state *state,
                                                        config->release_percent);
     state->previous_resting = delta < (int32_t)(resting_threshold / 3U);
     bool travelling = was_moving || prior_travel || (moving && state->previous_resting);
-    /* A second squeeze naturally shifts the contact centroid. Keep its local
-     * repeat threshold and click position within a bounded spatial zone. Do
-     * not use two tiny same-direction samples to cancel a double click. */
-    bool repeating = !state->down && now_ms < state->repeat_until_ms;
-    if (repeating && tps43_force_moved(x, y, state->repeat_x, state->repeat_y,
-                                      config->repeat_motion_threshold)) {
+    if (!state->down && travelling) {
         state->repeat_until_ms = 0;
-        repeating = false;
-        travelling = true;
-        state->candidate = false;
-        state->motion_until_ms = now_ms + config->motion_settle_ms;
-        /* Crossing the repeat zone is intentional travel. Release the cursor
-         * immediately, including the short post-release quiet interval. */
-        state->quiet_until_ms = 0;
-        state->suppress_motion = false;
-    } else if (repeating) {
-        travelling = false;
-        state->suppress_motion = true;
     }
+    bool repeating = !state->down && now_ms < state->repeat_until_ms;
     uint32_t moving_threshold = tps43_force_threshold(state->baseline,
         config->moving_press_delta, config->moving_press_percent);
     if (moving_threshold < resting_threshold) { moving_threshold = resting_threshold; }
@@ -364,8 +338,6 @@ tps43_force_step(struct tps43_force_state *state,
         state->baseline_q8 = (int32_t)strength * 256;
         state->repeat_until_ms = now_ms + config->repeat_ms;
         state->repeat_threshold = (uint16_t)release_threshold;
-        state->repeat_x = x;
-        state->repeat_y = y;
         state->press_peak = 0;
         state->previous_dx = state->previous_dy = 0;
         state->previous_resting = false;
@@ -373,7 +345,6 @@ tps43_force_step(struct tps43_force_state *state,
         state->dragging = false;
         state->drag_armed = false;
         state->motion_until_ms = 0;
-        state->motion_window_ms = now_ms;
         state->motion_x = x;
         state->motion_y = y;
     }

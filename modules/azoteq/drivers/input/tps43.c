@@ -1,5 +1,4 @@
 #include <stdint.h>
-#include <string.h>
 #define DT_DRV_COMPAT azoteq_tps43
 
 #include <zephyr/device.h>
@@ -16,7 +15,6 @@
 #include <errno.h>
 
 #include "tps43.h"
-#include <toucan/split_stats.h>
 
 LOG_MODULE_REGISTER(tps43, CONFIG_INPUT_LOG_LEVEL);
 
@@ -26,69 +24,8 @@ static void tps43_power_work(struct k_work *work);
 
 static void tps43_force_report(const struct device *dev, enum tps43_force_event event) {
     if (event != TPS43_FORCE_NONE) {
-        struct tps43_drv_data *data = dev->data;
-        if (event == TPS43_FORCE_PRESS) {
-            data->diag_live[7] = data->diag_live[6] & 0xffffU;
-            data->diag_live[9] = (data->diag_live[9] & 0xffff0000U) |
-                ((data->diag_live[9] + 1U) & 0xffffU);
-        } else {
-            data->diag_live[8] = data->diag_live[6] & 0xffffU;
-            data->diag_live[9] += 0x10000U;
-        }
         input_report_key(dev, INPUT_BTN_0, event == TPS43_FORCE_PRESS, true, K_MSEC(5));
         LOG_DBG("Force click %s", event == TPS43_FORCE_PRESS ? "down" : "up");
-    }
-}
-
-/* One optional unsynchronized diagnostic event per 100 ms, with no waiting.
- * A complete snapshot needs matching sequence markers at the central. */
-static void tps43_diagnostic_sample(const struct device *dev, int64_t now,
-                                    uint8_t fingers, bool valid, uint16_t strength,
-                                    int16_t dx, int16_t dy) {
-    struct tps43_drv_data *d = dev->data;
-    uint32_t distance = (uint32_t)abs((int)dx) + (uint32_t)abs((int)dy);
-    d->diag_live[0] = (uint32_t)now;
-    d->diag_live[1]++;
-    if (valid && fingers == 1 && distance) {
-        d->diag_live[2]++;
-        d->diag_live[3] += distance;
-        if (d->force.suppress_motion) {
-            d->diag_live[4]++;
-            d->diag_live[5] += distance;
-        }
-    }
-    d->diag_live[6] = strength | ((uint32_t)fingers << 16) |
-        ((uint32_t)d->force.down << 24) | ((uint32_t)d->force.dragging << 25) |
-        ((uint32_t)d->force.suppress_motion << 26) |
-        ((uint32_t)d->force.candidate << 27) | ((uint32_t)d->force.ready << 28);
-    d->diag_live[10] = d->force.baseline;
-    if (now < d->diag_next_ms) { return; }
-    if (!d->diag_phase) {
-        memcpy(d->diag_snapshot, d->diag_live, sizeof(d->diag_snapshot));
-#if defined(CONFIG_ZMK_SPLIT) && !defined(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) && defined(CONFIG_ZMK_BLE) && defined(CONFIG_ZMK_INPUT_SPLIT)
-        struct toucan_split_stats stats = toucan_split_stats_get();
-        /* Optional source-format marker. The left transports these opaque
-         * words unchanged; no left reflash or additional radio events needed. */
-        d->diag_snapshot[6] |= 0x80000000U | ((uint32_t)MIN(stats.queued,3U) << 29);
-        d->diag_snapshot[6] |= ((uint32_t)MIN(d->diag_max_fingers,7U) << 19) |
-            ((uint32_t)d->diag_three_claimed << 22) | ((uint32_t)d->diag_middle_generated << 23);
-        d->diag_snapshot[7] |= (uint32_t)MIN(stats.max_notify_ms,65535U) << 16;
-        d->diag_snapshot[8] |= (uint32_t)MIN(stats.max_complete_ms,65535U) << 16;
-        d->diag_snapshot[10] |= (uint32_t)MIN(stats.max_queue_ms,65535U) << 16;
-#endif
-        d->diag_sequence++;
-    }
-    uint32_t value = (d->diag_phase == 0 ||
-                     d->diag_phase == TOUCAN_DIAG_SOURCE_WORDS + 1)
-        ? d->diag_sequence : d->diag_snapshot[d->diag_phase - 1];
-    /* Diagnostics can be dropped; they must never hold up sensor processing. */
-    input_report_abs(dev, TOUCAN_DIAG_CODE_BASE + d->diag_phase,
-                     (int32_t)value, false, K_NO_WAIT);
-    if (++d->diag_phase == TOUCAN_DIAG_SOURCE_WORDS + 2) {
-        d->diag_phase = 0;
-        d->diag_next_ms = now + 800;
-    } else {
-        d->diag_next_ms = now + 100;
     }
 }
 
@@ -372,10 +309,6 @@ static int tps43_set_suspend_internal(const struct device *dev, bool suspend, bo
 
     if (suspend && config->force_click) {
         tps43_force_cancel_and_report(dev);
-        if (drv_data->touching) {
-            drv_data->touching = false;
-            input_report_key(dev, INPUT_BTN_TOUCH, 0, true, K_MSEC(5));
-        }
     }
 
     // Disable RDY interrupts when entering suspend (before any I2C operations)
@@ -572,10 +505,6 @@ static void tps43_work_handler(struct k_work *work) {
 
     if (config->force_click && (touch_data[2] & TPS43_SHOW_RESET)) {
         tps43_force_cancel_and_report(dev);
-        if (drv_data->touching) {
-            drv_data->touching = false;
-            input_report_key(dev, INPUT_BTN_TOUCH, 0, true, K_MSEC(5));
-        }
         ret = check_reset_and_reconfigure(dev);
         if (ret < 0) {
             LOG_ERR("Force click sensor reconfiguration failed: %d", ret);
@@ -586,7 +515,6 @@ static void tps43_work_handler(struct k_work *work) {
     const uint8_t gestures_events[2] = {touch_data[0], touch_data[1]};
     int64_t sample_ms = k_uptime_get();
     uint8_t num_fingers = touch_data[4];
-    drv_data->diag_max_fingers = MAX(drv_data->diag_max_fingers, num_fingers);
     int16_t rel_x = (int16_t)((touch_data[5] << 8) | touch_data[6]);
     int16_t rel_y = (int16_t)((touch_data[7] << 8) | touch_data[8]);
 
@@ -616,22 +544,19 @@ static void tps43_work_handler(struct k_work *work) {
         uint8_t area = touch_data[TPS43_REG_TOUCH_AREA - TPS43_REG_GESTURE_EVENTS_0];
         uint16_t x = sys_get_be16(&touch_data[TPS43_REG_ABS_X - TPS43_REG_GESTURE_EVENTS_0]);
         uint16_t y = sys_get_be16(&touch_data[TPS43_REG_ABS_Y - TPS43_REG_GESTURE_EVENTS_0]);
-        bool contacts_valid = tps43_contact_valid(touch_data[3], num_fingers);
-        bool valid = tps43_first_contact_valid(touch_data[3], num_fingers, area);
-        is_touching = is_touching && contacts_valid;
+        bool valid = !(touch_data[3] & (TPS43_PALM_DETECT | TPS43_TOO_MANY_FINGERS)) &&
+                     (num_fingers == 0 || area != 0);
+        is_touching = is_touching && valid;
         if (config->three_finger_tap) {
             bool consumed = drv_data->force.down ||
                 (drv_data->force.tap_consumed && !drv_data->force.blocked);
             three_tap = tps43_three_tap_step(&drv_data->three_tap, sample_ms,
-                num_fingers, contacts_valid, consumed, x, y,
-                config->three_finger_tap_ms, config->three_finger_tap_distance);
-            drv_data->diag_three_claimed |= three_tap.claimed;
-            drv_data->diag_middle_generated |= three_tap.click;
+                num_fingers, valid, consumed, x, y,
+                config->tap_time >= 0 ? config->tap_time : 200,
+                config->tap_distance >= 0 ? config->tap_distance : 16);
         }
-        drv_data->diag_live[6] = strength;
         tps43_force_report(dev, tps43_force_step(&drv_data->force, &config->force,
                                                sample_ms, num_fingers, strength, valid, x, y));
-        tps43_diagnostic_sample(dev, sample_ms, num_fingers, valid, strength, rel_x, rel_y);
         if (config->single_tap) {
             software_tap = tps43_tap_step(&drv_data->tap, sample_ms, num_fingers,
                                            valid, drv_data->force.tap_consumed, x, y,
@@ -639,7 +564,7 @@ static void tps43_work_handler(struct k_work *work) {
                                            config->tap_distance >= 0 ? config->tap_distance : 16);
         }
         tps43_force_display_report(dev, tps43_force_display_state(&drv_data->force,
-                                                                 num_fingers, contacts_valid));
+                                                                 num_fingers, valid));
         if (is_touching) {
             k_work_reschedule_for_queue(&drv_data->work_q, &drv_data->force_watchdog,
                                          K_MSEC(TPS43_FORCE_STALE_MS));
@@ -743,8 +668,7 @@ static void tps43_work_handler(struct k_work *work) {
             input_report_rel(dev, INPUT_REL_MISC, zoom_delta, true, K_MSEC(5));
             is_zoom_active = false;
         } else if (!three_tap.claimed &&
-                   (!config->force_click || (is_touching && num_fingers == 1 &&
-                                             !drv_data->force.suppress_motion))) {
+                   (!config->force_click || (is_touching && !drv_data->force.suppress_motion))) {
             /* Drop squeeze/release displacement instead of replaying it later.
              * Scroll and zoom keep their own movement paths above. */
             if (rel_x != 0 ) {
@@ -789,7 +713,6 @@ done:
 static int tps43_reset_values(const struct device *dev) {
     struct tps43_drv_data *drv_data = dev->data;
 
-    drv_data->device_ready = false;
     drv_data->initialized = false;
     drv_data->drag_active = false;
 
@@ -846,19 +769,6 @@ static int tps43_configure_device(const struct device *dev) {
     }
 
     // enable single gestures at hardware level
-    if (config->three_finger_tap || config->three_finger_swipe) {
-        uint8_t max_fingers;
-        ret = tps43_i2c_read_reg8(dev, TPS43_REG_MAX_MULTI_TOUCHES, &max_fingers);
-        if (ret != 0) { return ret; }
-        if (max_fingers < 3) {
-            ret = tps43_i2c_write_reg8(dev, TPS43_REG_MAX_MULTI_TOUCHES, 3);
-            if (ret != 0) { return ret; }
-            ret = tps43_i2c_read_reg8(dev, TPS43_REG_MAX_MULTI_TOUCHES, &max_fingers);
-            if (ret != 0) { return ret; }
-            if (max_fingers < 3) { return -EIO; }
-        }
-    }
-
     {
         uint8_t single_gestures = 0;
         /* Force mode recognizes ordinary taps in software, keeping hardware
@@ -1301,7 +1211,6 @@ static int check_reset_and_reconfigure(const struct device *dev) {
         return ret;
     }
 
-    drv_data->device_ready = true;
 
     return 0;
 }
@@ -1700,7 +1609,6 @@ static int tps43_init(const struct device *dev) {
 
 #define TPS43_INIT(inst)                                                                             \
     static struct tps43_drv_data tps43_##inst##_drvdata = {                                          \
-        .device_ready = false,                                                                       \
         .initialized = false,                                                                        \
         .drag_active = false,                                                                        \
         .suspended = false,                                                                          \
@@ -1728,12 +1636,9 @@ static int tps43_init(const struct device *dev) {
             .motion_settle_ms = DT_INST_PROP(inst, force_click_motion_settle_ms),                    \
             .drag_hold_ms = DT_INST_PROP(inst, force_click_drag_hold_ms),                            \
             .repeat_ms = DT_INST_PROP(inst, force_click_repeat_ms),                                  \
-            .repeat_motion_threshold = DT_INST_PROP(inst, force_click_repeat_motion_threshold),        \
         },                                                                                         \
         .two_finger_tap = DT_INST_PROP(inst, two_finger_tap),                                        \
         .three_finger_tap = DT_INST_PROP(inst, three_finger_tap),                                    \
-        .three_finger_tap_ms = DT_INST_PROP(inst, three_finger_tap_ms),                                \
-        .three_finger_tap_distance = DT_INST_PROP(inst, three_finger_tap_distance),                    \
         .scroll = DT_INST_PROP(inst, scroll),                                                        \
         .zoom = DT_INST_PROP(inst, zoom),                                                            \
         .swipes = DT_INST_PROP(inst, swipes),                                                        \
@@ -1794,14 +1699,6 @@ static int tps43_init(const struct device *dev) {
                  DT_INST_PROP(inst, force_click_drag_hold_ms) <= 1000, "Invalid drag hold");         \
     BUILD_ASSERT(DT_INST_PROP(inst, force_click_repeat_ms) >= 0 &&                                   \
                  DT_INST_PROP(inst, force_click_repeat_ms) <= 1000, "Invalid repeat window");        \
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_repeat_motion_threshold) >= 0 &&                       \
-                 DT_INST_PROP(inst, force_click_repeat_motion_threshold) <= UINT16_MAX,              \
-                 "Invalid repeat motion tolerance");                                                \
-    BUILD_ASSERT(DT_INST_PROP(inst, three_finger_tap_ms) > 0 &&                                        \
-                 DT_INST_PROP(inst, three_finger_tap_ms) <= 1000, "Invalid three finger tap time");   \
-    BUILD_ASSERT(DT_INST_PROP(inst, three_finger_tap_distance) >= 0 &&                                 \
-                 DT_INST_PROP(inst, three_finger_tap_distance) <= UINT16_MAX,                         \
-                 "Invalid three finger tap distance");                                              \
     BUILD_ASSERT(DT_INST_PROP(inst, force_click_moving_threshold) >=                                 \
                  DT_INST_PROP(inst, force_click_threshold) &&                                       \
                  DT_INST_PROP(inst, force_click_moving_threshold) <= UINT16_MAX,                     \

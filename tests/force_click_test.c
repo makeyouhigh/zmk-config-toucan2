@@ -4,16 +4,14 @@
 #include "../modules/azoteq/drivers/input/tps43_force.h"
 #include "../modules/azoteq/drivers/input/tps43_tap.h"
 #include "../modules/azoteq/drivers/input/tps43_three_tap.h"
-#include "../modules/azoteq/drivers/input/tps43_contact.h"
 #include <toucan/touch_lease.h>
-#include <toucan/diagnostics.h>
 
 static const struct tps43_force_config config = {
     .press_delta = 30, .release_delta = 16, .press_percent = 8, .release_percent = 3,
     .baseline_ms = 40, .debounce_ms = 16, .settle_ms = 64,
     .motion_threshold = 6, .drag_threshold = 48,
     .moving_press_delta = 90, .moving_press_percent = 24, .motion_settle_ms = 32,
-    .drag_hold_ms = 300, .repeat_ms = 400, .repeat_motion_threshold = 12,
+    .drag_hold_ms = 300, .repeat_ms = 400,
 };
 struct fixture { struct tps43_force_state s; int64_t t; uint16_t x, y; };
 static struct fixture fresh(void) { return (struct fixture){.x=1000, .y=1000}; }
@@ -129,9 +127,7 @@ static void test_motion_after_click_stays_fluid(void) {
         struct fixture slow=fresh(); rest(&slow,1000);
         press(&slow,1200); release(&slow,1000);
         for (int i=0;i<2;i++) assert(sample(&slow,1000)==0);
-        /* The bounded repeat-click zone deliberately holds tiny centroid
-         * motion; after its boundary, even one-unit travel stays immediate. */
-        slow.x+=config.repeat_motion_threshold+1; assert(sample(&slow,1000)==0);
+        slow.x+=step; assert(sample(&slow,1000)==0);
         for (int i=0;i<100;i++) {
             slow.x+=step;
             assert(sample(&slow,(uint16_t)(1100+(i%3)*70))==0);
@@ -141,8 +137,7 @@ static void test_motion_after_click_stays_fluid(void) {
     struct fixture f=fresh(); rest(&f,1000); press(&f,1200);
     release(&f,1000);
     for (int i=0;i<2;i++) assert(sample(&f,1000)==0);
-    f.x+=config.repeat_motion_threshold+1;
-    assert(sample(&f,1000)==0 && !f.s.suppress_motion);
+    f.x+=4; assert(sample(&f,1000)==0 && !f.s.suppress_motion);
     for (int i=0;i<100;i++) {
         f.x+=4;
         assert(sample(&f,(uint16_t)(1100+(i%3)*70))==0);
@@ -460,7 +455,7 @@ static void test_repeat_from_local_trough(void) {
     for (int i=0;i<8;i++) assert(sample(&f,1070)==0 && !f.s.down);
     /* Deliberate travel cancels repeat assistance. */
     f=fresh(); rest(&f,1000); press(&f,1100); release(&f,1060);
-    f.x+=config.repeat_motion_threshold+1; assert(sample(&f,1060)==0);
+    f.x+=12; assert(sample(&f,1060)==0);
     assert(f.s.repeat_until_ms==0);
     for (int i=0;i<20;i++) {
         f.x+=12; assert(sample(&f,1100)==0 && !f.s.suppress_motion);
@@ -478,80 +473,7 @@ static void test_early_motion_is_not_replayed_as_drag(void) {
     assert(send_frame(&f,0,0,true)==TPS43_FORCE_RELEASE);
 }
 
-static void test_diagnostic_snapshot_loss(void) {
-    for (int missing=-1;missing<TOUCAN_DIAG_SOURCE_WORDS;missing++) {
-        struct toucan_diag_source s={0};
-        assert(!toucan_diag_source_step(&s,TOUCAN_DIAG_CODE_BASE,123));
-        for (int i=0;i<TOUCAN_DIAG_SOURCE_WORDS;i++) {
-            if (i!=missing) assert(!toucan_diag_source_step(&s,
-                (uint16_t)(TOUCAN_DIAG_CODE_BASE+1+i),(uint32_t)(100+i)));
-        }
-        bool completed=toucan_diag_source_step(&s,TOUCAN_DIAG_CODE_END,123);
-        assert(completed==(missing<0));
-        assert(s.drops==(missing<0 ? 0U : 1U));
-        assert(!toucan_diag_source_step(&s,TOUCAN_DIAG_CODE_END,123));
-    }
-    struct toucan_diag_source s={0};
-    assert(!toucan_diag_source_step(&s,TOUCAN_DIAG_CODE_BASE,321));
-    for (int i=0;i<TOUCAN_DIAG_SOURCE_WORDS;i++)
-        assert(!toucan_diag_source_step(&s,(uint16_t)(TOUCAN_DIAG_CODE_BASE+1+i),7));
-    assert(!toucan_diag_source_step(&s,TOUCAN_DIAG_CODE_END,322));
-    assert(s.drops==1);
-}
-
-static void test_repeat_with_small_finger_motion(void) {
-    struct fixture f=fresh(); rest(&f,1000); press(&f,1100); release(&f,1060);
-    int cursor_displacement=0;
-    for (int i=0;i<3;i++) {
-        f.x+=2; assert(sample(&f,1060)==0);
-        if (!f.s.suppress_motion) cursor_displacement+=2;
-    }
-    for (int i=0;i<3;i++) {
-        f.x+=2;
-        assert(sample(&f,1100)==(i==2 ? TPS43_FORCE_PRESS : TPS43_FORCE_NONE));
-        if (!f.s.suppress_motion) cursor_displacement+=2;
-    }
-    assert(cursor_displacement==0 && f.s.down);
-    release(&f,1060);
-    f.x+=13; assert(sample(&f,1060)==0 && !f.s.suppress_motion);
-    assert(f.s.repeat_until_ms==0);
-}
-
-static void test_staggered_lift_keeps_three_tap_valid(void) {
-    struct tps43_three_tap_state s={0};
-    struct fixture f=fresh();
-    const uint8_t fingers[]={1,2,3,3,2,2,1,0};
-    const uint8_t area[]={4,4,4,4,0,0,0,0};
-    for (unsigned int i=0;i<sizeof(fingers);i++) {
-        bool consumed=f.s.down || (f.s.tap_consumed && !f.s.blocked);
-        bool valid=tps43_contact_valid(0,fingers[i]);
-        struct tps43_three_tap_result r=tps43_three_tap_step(&s,(int64_t)i*32,
-            fingers[i],valid,consumed,area[i] ? 1000 : 0,1000,300,48);
-        assert(r.click == (i==sizeof(fingers)-1));
-        send_frame(&f,fingers[i],area[i] ? 1000 : 0,
-                   tps43_first_contact_valid(0,fingers[i],area[i]));
-    }
-    assert(!tps43_contact_valid(2,3) && !tps43_contact_valid(4,3));
-    assert(!tps43_contact_valid(0,6));
-    assert(!tps43_first_contact_valid(0,1,0));
-    assert(tps43_contact_valid(0,1));
-    assert(tps43_first_contact_valid(0,0,0));
-}
-
-static void test_repeat_zone_has_no_tail_after_travel(void) {
-    struct fixture f=fresh(); rest(&f,1000); press(&f,1100); release(&f,1060);
-    f.x+=2; assert(sample(&f,1100)==0 && f.s.candidate);
-    f.x+=11; assert(sample(&f,1100)==0 && !f.s.down && !f.s.suppress_motion);
-    for (int i=0;i<100;i++) {
-        f.x++; assert(sample(&f,1100)==0 && !f.s.down && !f.s.suppress_motion);
-    }
-}
-
 int main(void) {
-    test_staggered_lift_keeps_three_tap_valid();
-    test_repeat_zone_has_no_tail_after_travel();
-    test_repeat_with_small_finger_motion();
-    test_diagnostic_snapshot_loss();
     puts("test_squeeze_rebound_must_not_latch_drag"); fflush(stdout); test_squeeze_rebound_must_not_latch_drag();
     puts("test_repeat_from_local_trough"); fflush(stdout); test_repeat_from_local_trough();
     puts("test_early_motion_is_not_replayed_as_drag"); fflush(stdout); test_early_motion_is_not_replayed_as_drag();
