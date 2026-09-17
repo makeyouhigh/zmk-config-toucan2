@@ -1,4 +1,4 @@
-현재 수정본: [v9 — 클릭 전 이동 억제 분리 + 접촉 유지 더블클릭 판정 수정](FIRMWARE_VERSIONS.md)
+현재 펌웨어: [v9 — 클릭 전 이동 억제 분리 + 접촉 유지 더블클릭 판정 수정](FIRMWARE_VERSIONS.md) · [검증된 빌드](https://github.com/makeyouhigh/zmk-config-toucan2/actions/runs/35177750502)
 
 # ZMK config for beekeeb Toucan2 Keyboard
 
