@@ -3,8 +3,10 @@
 #include <zephyr/device.h>
 #include <drivers/behavior.h>
 #include <toucan/force_levels.h>
+#include <toucan/force_behavior.h>
 
 #if DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
+TOUCAN_FORCE_ASSERT_SPLIT_NAME(DT_DRV_INST(0));
 static int pressed(struct zmk_behavior_binding *binding, struct zmk_behavior_binding_event event) {
     ARG_UNUSED(event);
 #if IS_ENABLED(CONFIG_INPUT_TPS43)

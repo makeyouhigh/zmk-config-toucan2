@@ -29,12 +29,12 @@ try {
     Start-Sleep -Milliseconds 300
     $serial.DiscardInBuffer()
     $status = Request-Line 'S'
-    if ($status -notmatch '^STATUS,(v11|v12|v13|v14|v15),(1|2),') {
+    if ($status -notmatch '^STATUS,(v11|v12|v13|v14|v15|v16),(1|2),') {
         throw "Unexpected firmware: $status"
     }
     $version = $Matches[1]
     $protocol = $Matches[2]
-    if (($version -in @('v14','v15')) -ne ($protocol -eq '2')) { throw "Unexpected protocol: $status" }
+    if (($version -in @('v14','v15','v16')) -ne ($protocol -eq '2')) { throw "Unexpected protocol: $status" }
     @{state='ready';port=$Port;status=$status} | ConvertTo-Json -Compress
     if ($StartFile) {
         $deadline = [DateTime]::UtcNow.AddSeconds(180)

@@ -3,6 +3,7 @@
 #include <zephyr/device.h>
 #include <drivers/behavior.h>
 #include <toucan/force_levels.h>
+#include <toucan/force_behavior.h>
 
 #if DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
 struct force_adjust_config { uint32_t command, amount; };
@@ -34,6 +35,7 @@ static const struct behavior_driver_api api={
 };
 
 #define FORCE_ADJUST_INST(n) \
+    TOUCAN_FORCE_ASSERT_SPLIT_NAME(DT_DRV_INST(n)); \
     BUILD_ASSERT(DT_INST_PROP(n,amount)>0 && DT_INST_PROP(n,amount)<=2000, "Invalid force step"); \
     static const struct force_adjust_config config_##n={ \
         .command=DT_INST_PROP(n,command),.amount=DT_INST_PROP(n,amount)}; \

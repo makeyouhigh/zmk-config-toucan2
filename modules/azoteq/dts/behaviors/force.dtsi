@@ -1,7 +1,7 @@
 #include <dt-bindings/zmk/force.h>
 / {
     behaviors {
-        force_cfg: force_cfg {
+        force_cfg: fcfg {
             compatible = "zmk,behavior-force-config";
             #binding-cells = <2>;
             display-name = "포스터치 기준";

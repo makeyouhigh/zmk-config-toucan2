@@ -263,14 +263,14 @@
             command = <FORCE_LOCK_DOWN>;
             amount = <100>;
         };
-        fclick_up: fclick_up {
+        fclick_up: fclk_up {
             compatible = "zmk,behavior-force-adjust";
             #binding-cells = <0>;
             display-name = "클릭 +100";
             command = <FORCE_CLICK_UP>;
             amount = <100>;
         };
-        fclick_dn: fclick_dn {
+        fclick_dn: fclk_dn {
             compatible = "zmk,behavior-force-adjust";
             #binding-cells = <0>;
             display-name = "클릭 -100";
