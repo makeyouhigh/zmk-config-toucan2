@@ -56,6 +56,7 @@ static void tps43_force_cancel_and_report(const struct device *dev) {
     tps43_tap_cancel(&data->tap);
     tps43_three_tap_cancel(&data->three_tap);
     k_work_cancel_delayable(&data->force_watchdog);
+    toucan_force_levels_contact(false);
     tps43_force_report(dev, tps43_force_cancel(&data->force, true));
     if (data->touching) {
         data->touching = false;
@@ -78,7 +79,7 @@ static void tps43_force_watchdog(struct k_work *work) {
 #endif
         tps43_force_cancel_and_report(data->dev);
 #ifdef CONFIG_TOUCAN_FORCE_TRACE
-        tps43_trace_state(&trace, &data->force, &((const struct tps43_config *)data->dev->config)->force);
+        tps43_trace_state(&trace, &data->force, &data->force_runtime);
         tps43_trace_record(&trace, false);
 #endif
         LOG_WRN("Touch and force released: no fresh sensor data");
@@ -589,7 +590,15 @@ static void tps43_work_handler(struct k_work *work) {
                 config->tap_time >= 0 ? config->tap_time : 200,
                 config->three_finger_tap_distance);
         }
-        enum tps43_force_event force_event = tps43_force_step(&drv_data->force, &config->force,
+        /* Changing settings never moves a held click's release boundary.
+         * The next contact takes one coherent copy of all five levels. */
+        if (!drv_data->force.active && !drv_data->force.blocked) {
+            struct toucan_force_levels levels;
+            toucan_force_levels_get(&levels);
+            drv_data->force_runtime = config->force;
+            tps43_force_set_levels(&drv_data->force_runtime, &levels);
+        }
+        enum tps43_force_event force_event = tps43_force_step(&drv_data->force, &drv_data->force_runtime,
                                                sample_ms, num_fingers, strength, valid, x, y);
         int force_rc = tps43_force_report(dev, force_event);
 #ifdef CONFIG_TOUCAN_FORCE_TRACE
@@ -619,6 +628,7 @@ static void tps43_work_handler(struct k_work *work) {
                 drv_data->force.down, drv_data->force.dragging,
                 drv_data->force.suppress_motion, x, y);
     }
+    toucan_force_levels_contact(is_touching);
     if (is_touching != drv_data->touching) {
         drv_data->touching = is_touching;
         LOG_INF("Touch state changed: %s", is_touching ? "down" : "up");
@@ -755,7 +765,7 @@ done:
     trace.work_us = k_cyc_to_us_floor32(k_cycle_get_32() - trace_cycles);
     trace.frame_rc = ret;
     trace.extra |= (software_tap << 1) | (three_tap.click << 2) | (three_tap.claimed << 3);
-    tps43_trace_state(&trace, &drv_data->force, &config->force);
+    tps43_trace_state(&trace, &drv_data->force, &drv_data->force_runtime);
     tps43_trace_record(&trace, drv_data->touching);
 #endif
 
@@ -1595,6 +1605,7 @@ static int tps43_init(const struct device *dev) {
     int ret;
 
     drv_data->dev = dev;
+    drv_data->force_runtime = config->force;
     /* These must exist before an RDY interrupt can queue work. */
     k_sem_init(&drv_data->lock, 1, 1);
     k_work_init(&drv_data->work, tps43_work_handler);

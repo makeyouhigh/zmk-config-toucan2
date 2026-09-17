@@ -210,7 +210,53 @@ static void test_three_tap_rejection_and_missing_first_slot(void) {
     assert(!tps43_three_tap_step(&s,980,0,true,false,0,0,200,64).click);
 }
 
+static void test_adjustable_levels(void) {
+    const struct toucan_force_levels original={4250,4500,4000,4750,5000};
+    struct toucan_force_levels v=original;
+    assert(toucan_force_levels_valid(&v));
+    for (unsigned command=0;command<=FORCE_RELEASE_DOWN;command++) {
+        v=original;
+        assert(toucan_force_levels_adjust(&v,command,100));
+        assert(toucan_force_levels_valid(&v));
+        assert(v.moving_lock-v.lock==500 && v.moving_press-v.press==500);
+        assert(toucan_force_levels_adjust(&v,command^1,100));
+        assert(v.lock==original.lock && v.press==original.press && v.release==original.release);
+    }
+    /* Reject overlap, underflow, overflow and malformed commands atomically. */
+    const uint32_t bad[][2]={{FORCE_LOCK_UP,250},{FORCE_LOCK_DOWN,250},
+        {FORCE_CLICK_DOWN,250},{FORCE_RELEASE_UP,250},{FORCE_CLICK_UP,0},
+        {FORCE_CLICK_UP,2001},{FORCE_CLICK_UP,UINT32_MAX},{UINT32_MAX,100}};
+    for(unsigned i=0;i<sizeof(bad)/sizeof(bad[0]);i++) {
+        v=original;
+        assert(!toucan_force_levels_adjust(&v,bad[i][0],bad[i][1]));
+        assert(v.lock==original.lock && v.press==original.press && v.release==original.release &&
+               v.moving_lock==original.moving_lock && v.moving_press==original.moving_press);
+    }
+    v=(struct toucan_force_levels){10,20,1,30,65535};
+    assert(!toucan_force_levels_adjust(&v,FORCE_RELEASE_DOWN,1) && v.release==1);
+    assert(!toucan_force_levels_adjust(&v,FORCE_CLICK_UP,1) && v.press==20 && v.moving_press==65535);
+    v=original;
+    assert(toucan_force_levels_adjust(&v,FORCE_CLICK_UP,100));
+    struct tps43_force_config runtime=config;
+    tps43_force_set_levels(&runtime,&v);
+    assert(tps43_force_config_valid(&runtime));
+    assert(runtime.press_level==4600 && runtime.moving_press_level==5100);
+    assert(runtime.touch_hold_ms==250 && runtime.debounce_ms==8);
+    struct tps43_force_state s={0};
+    assert(tps43_force_step(&s,&runtime,0,1,4500,true,1000,1000)==0);
+    assert(tps43_force_step(&s,&runtime,8,1,4500,true,1000,1000)==0 && !s.down);
+    assert(tps43_force_step(&s,&runtime,16,1,4600,true,1000,1000)==0);
+    assert(tps43_force_step(&s,&runtime,24,1,4600,true,1000,1000)==TPS43_FORCE_PRESS);
+    assert(toucan_force_levels_adjust(&v,FORCE_RELEASE_DOWN,100));
+    /* Pending settings leave the active contact's release boundary unchanged. */
+    assert(tps43_force_step(&s,&runtime,32,1,4000,true,1000,1000)==TPS43_FORCE_RELEASE);
+    assert(tps43_force_step(&s,&runtime,40,0,0,true,1000,1000)==0);
+    tps43_force_set_levels(&runtime,&v);
+    assert(runtime.release_level==3900);
+}
+
 int main(void) {
+    test_adjustable_levels();
     test_initial_contact_never_changes_levels();
     test_fixed_hysteresis_and_short_release();
     test_repeated_fast_and_slow_clicks();

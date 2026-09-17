@@ -1,0 +1,3 @@
+description: Fixed touchpad strength threshold adjustment
+compatible: "zmk,behavior-force-config"
+include: two_param.yaml

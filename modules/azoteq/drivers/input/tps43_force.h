@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <toucan/force_display.h>
+#include <toucan/force_levels.h>
 
 #define TPS43_FORCE_STALE_MS 250
 #define TPS43_HOLD_SLOP 12U
@@ -31,6 +32,16 @@ struct tps43_force_state {
     uint16_t motion_x, motion_y, hold_x, hold_y, drag_x, drag_y;
     uint16_t lock_level, press_level;
 };
+
+/* Copy only levels; timing and motion distances remain the device settings. */
+static inline void tps43_force_set_levels(struct tps43_force_config *c,
+                                          const struct toucan_force_levels *v) {
+    c->lock_level=v->lock;
+    c->press_level=v->press;
+    c->release_level=v->release;
+    c->moving_lock_level=v->moving_lock;
+    c->moving_press_level=v->moving_press;
+}
 
 static inline bool tps43_force_config_valid(const struct tps43_force_config *c) {
     return c->release_level > 0 && c->release_level < c->lock_level &&

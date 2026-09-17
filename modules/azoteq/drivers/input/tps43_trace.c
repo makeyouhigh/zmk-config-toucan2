@@ -75,6 +75,16 @@ static void trace_thread(void *a, void *b, void *c) {
             continue;
         }
         char line[180];
+        if (command == 'G') {
+            struct toucan_force_levels levels;
+            toucan_force_levels_get(&levels);
+            snprintk(line, sizeof(line), "LEVELS,v14,2,%u,%u,%u,%u,%u\n",
+                     levels.lock, levels.press, levels.release,
+                     levels.moving_lock, levels.moving_press);
+            reply(uart, line);
+            k_sleep(K_MSEC(1));
+            continue;
+        }
         struct tps43_trace_record record;
         bool have_record = false;
         uint16_t index = 0;

@@ -1,3 +1,4 @@
+#include <behaviors/force.dtsi>
 #include <input/processors.dtsi>
 #include <dt-bindings/input/input-event-codes.h>
 #include <dt-bindings/zmk/input_transform.h>
