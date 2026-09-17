@@ -1,0 +1,11 @@
+description: One fixed force threshold command for graphical keymap editors
+compatible: "zmk,behavior-force-adjust"
+include: zero_param.yaml
+properties:
+  command:
+    type: int
+    required: true
+    enum: [0, 1, 2, 3, 4, 5]
+  amount:
+    type: int
+    default: 100

@@ -1,4 +1,4 @@
-현재 펌웨어: [v14 — 고정 기준 포스터치·키보드 감도 조절](FIRMWARE_VERSIONS.md). 양쪽 적용 대상입니다. 7번 SYS 레이어 Y/H·U/J·I/K에서 억제·클릭·해제값을 조절합니다. [설정과 동작 설명](docs/fixed-force-v14.md). 빌드·파일 검증 완료, 실기기 검증 전입니다.
+현재 펌웨어: [v15 — Keymap Editor Custom Behaviors 등록 보완](FIRMWARE_VERSIONS.md). 양쪽 적용 대상입니다. 7번 SYS 레이어 Y/H·U/J·I/K에서 억제·클릭·해제값을 조절합니다. [편집기 명령](docs/force-behaviors-v15.md) · [고정값과 판정](docs/fixed-force-v14.md).
 
 # ZMK config for beekeeb Toucan2 Keyboard
 

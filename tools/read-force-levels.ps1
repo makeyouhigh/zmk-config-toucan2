@@ -11,16 +11,16 @@ try {
     $serial.DiscardInBuffer()
     $serial.Write('G')
     $line = $serial.ReadLine().Trim()
-    if ($line -notmatch '^LEVELS,v14,2,(\d+),(\d+),(\d+),(\d+),(\d+)$') {
+    if ($line -notmatch '^LEVELS,(v14|v15),2,(\d+),(\d+),(\d+),(\d+),(\d+)$') {
         throw "Unexpected level response: $line"
     }
     [ordered]@{
-        version='v14'
-        lock=[int]$Matches[1]
-        click=[int]$Matches[2]
-        release=[int]$Matches[3]
-        moving_lock=[int]$Matches[4]
-        moving_click=[int]$Matches[5]
+        version=$Matches[1]
+        lock=[int]$Matches[2]
+        click=[int]$Matches[3]
+        release=[int]$Matches[4]
+        moving_lock=[int]$Matches[5]
+        moving_click=[int]$Matches[6]
     } | ConvertTo-Json
 } finally {
     if ($serial.IsOpen) { $serial.Close() }

@@ -246,15 +246,50 @@
     };
 
     behaviors {
-        /* Keymap Editor reads this file, not the module's behaviors/force.dtsi.
-         * This merges the same node; it does not create a second device.
-         * param1: 0 lock+, 1 lock-, 2 click+, 3 click-, 4 release+, 5 release-, 6 reset.
-         * param2: adjustment 1..2000 (reset uses 0).
-         */
-        force_cfg: force_cfg {
-            compatible = "zmk,behavior-force-config";
-            #binding-cells = <2>;
-            display-name = "포스터치 기준";
+        /* Explicit zero-parameter behaviors are selectable in Keymap Editor.
+         * The generic two-parameter force_cfg remains available to ZMK Studio.
+         * Keep device names short for split behavior transport. */
+        flock_up: flock_up {
+            compatible = "zmk,behavior-force-adjust";
+            #binding-cells = <0>;
+            display-name = "이동 억제 +100";
+            command = <FORCE_LOCK_UP>;
+            amount = <100>;
+        };
+        flock_dn: flock_dn {
+            compatible = "zmk,behavior-force-adjust";
+            #binding-cells = <0>;
+            display-name = "이동 억제 -100";
+            command = <FORCE_LOCK_DOWN>;
+            amount = <100>;
+        };
+        fclick_up: fclick_up {
+            compatible = "zmk,behavior-force-adjust";
+            #binding-cells = <0>;
+            display-name = "클릭 +100";
+            command = <FORCE_CLICK_UP>;
+            amount = <100>;
+        };
+        fclick_dn: fclick_dn {
+            compatible = "zmk,behavior-force-adjust";
+            #binding-cells = <0>;
+            display-name = "클릭 -100";
+            command = <FORCE_CLICK_DOWN>;
+            amount = <100>;
+        };
+        frel_up: frel_up {
+            compatible = "zmk,behavior-force-adjust";
+            #binding-cells = <0>;
+            display-name = "해제 +100";
+            command = <FORCE_RELEASE_UP>;
+            amount = <100>;
+        };
+        frel_dn: frel_dn {
+            compatible = "zmk,behavior-force-adjust";
+            #binding-cells = <0>;
+            display-name = "해제 -100";
+            command = <FORCE_RELEASE_DOWN>;
+            amount = <100>;
         };
     };
 
@@ -343,8 +378,8 @@
         SYS {
             display-name = "SYS";
             bindings = <
-&bt BT_CLR  &bt BT_SEL 0  &bt BT_SEL 1  &bt BT_SEL 2  &bt BT_SEL 3  &bt BT_SEL 4  &force_cfg FORCE_LOCK_UP 100  &force_cfg FORCE_CLICK_UP 100  &force_cfg FORCE_RELEASE_UP 100  &none  &none  &none
-&none       &none         &none         &none         &none         &none         &force_cfg FORCE_LOCK_DOWN 100  &force_cfg FORCE_CLICK_DOWN 100  &force_cfg FORCE_RELEASE_DOWN 100  &none  &none  &none
+&bt BT_CLR  &bt BT_SEL 0  &bt BT_SEL 1  &bt BT_SEL 2  &bt BT_SEL 3  &bt BT_SEL 4  &flock_up  &fclick_up  &frel_up  &none  &none  &none
+&none       &none         &none         &none         &none         &none         &flock_dn  &fclick_dn  &frel_dn  &none  &none  &none
 &none       &out OUT_TOG  &to 0         &bootloader   &sys_reset    &soft_off     &soft_off  &sys_reset  &bootloader  &to 0  &out OUT_TOG  &none
                                         &none         &none         &none         &none      &none       &none
             >;

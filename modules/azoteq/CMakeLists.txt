@@ -1,6 +1,7 @@
 zephyr_include_directories(include)
 add_subdirectory(drivers)
 target_sources(app PRIVATE src/behavior_force_config.c)
+target_sources(app PRIVATE src/behavior_force_adjust.c)
 target_sources_ifdef(CONFIG_INPUT_TPS43 app PRIVATE src/toucan_force_levels.c)
 target_sources_ifdef(CONFIG_ZMK_SPLIT_ROLE_CENTRAL app PRIVATE src/toucan_touch_guard.c)
 

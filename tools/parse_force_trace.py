@@ -1,4 +1,4 @@
-"""Validate legacy adaptive and v14 fixed-level RAM trace transfers."""
+"""Validate legacy adaptive and v14/v15 fixed-level RAM trace transfers."""
 import argparse
 import json
 import struct
@@ -61,7 +61,7 @@ def parse(document):
     lines = document["lines"]
     header = lines[0].split(",")
     if (len(header) != 7 or header[0] != "DATA" or
-            (header[1], header[2]) not in (("v11","1"),("v12","1"),("v13","1"),("v14","2"))):
+            (header[1], header[2]) not in (("v11","1"),("v12","1"),("v13","1"),("v14","2"),("v15","2"))):
         raise ValueError("Unexpected trace header/version")
     protocol = int(header[2])
     wire = WIRE if protocol == 1 else WIRE_V2
