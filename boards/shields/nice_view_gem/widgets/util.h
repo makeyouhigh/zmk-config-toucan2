@@ -2,6 +2,7 @@
 
 #include <lvgl.h>
 #include <zmk/endpoints.h>
+#include <toucan/force_levels.h>
 
 #define SCREEN_WIDTH 144
 #define SCREEN_HEIGHT 168
@@ -22,6 +23,9 @@ struct status_state {
     // uint8_t wpm;
     uint8_t modifiers;
     uint8_t touch_state;
+    struct toucan_force_levels force_levels;
+    uint32_t force_revision;
+    bool force_known;
 #if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
     struct zmk_endpoint_instance selected_endpoint;
     int active_profile_index;

@@ -7,3 +7,4 @@
 #define FORCE_RELEASE_UP 4
 #define FORCE_RELEASE_DOWN 5
 #define FORCE_RESET 6
+#define FORCE_READ 7

@@ -4,6 +4,7 @@
 #include <drivers/behavior.h>
 #include <toucan/force_levels.h>
 #include <toucan/force_behavior.h>
+#include <toucan/force_status.h>
 
 #if DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
 struct force_adjust_config { uint32_t command, amount; };
@@ -16,6 +17,9 @@ static int pressed(struct zmk_behavior_binding *binding, struct zmk_behavior_bin
     const struct force_adjust_config *config=dev->config;
     int err=toucan_force_levels_command(config->command,config->amount);
     if (err) { return err; }
+#elif IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
+    ARG_UNUSED(binding);
+    toucan_force_status_pending();
 #else
     ARG_UNUSED(binding);
 #endif

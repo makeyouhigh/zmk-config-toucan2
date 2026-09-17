@@ -4,14 +4,21 @@
 #include <drivers/behavior.h>
 #include <toucan/force_levels.h>
 #include <toucan/force_behavior.h>
+#include <toucan/force_status.h>
 
 #if DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
 TOUCAN_FORCE_ASSERT_SPLIT_NAME(DT_DRV_INST(0));
 static int pressed(struct zmk_behavior_binding *binding, struct zmk_behavior_binding_event event) {
     ARG_UNUSED(event);
 #if IS_ENABLED(CONFIG_INPUT_TPS43)
+    if (binding->param1==FORCE_READ && binding->param2==0) {
+        toucan_force_levels_publish();
+        return ZMK_BEHAVIOR_OPAQUE;
+    }
     int err=toucan_force_levels_command(binding->param1,binding->param2);
     if (err) { return err; }
+#elif IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
+    if (binding->param1 != FORCE_READ) toucan_force_status_pending();
 #else
     ARG_UNUSED(binding);
 #endif
@@ -31,7 +38,8 @@ static const struct behavior_parameter_value_metadata commands[]={
 static const struct behavior_parameter_value_metadata amounts[]={
     {.display_name="조절량 (센서 단위)",.type=BEHAVIOR_PARAMETER_VALUE_TYPE_RANGE,.range={.min=1,.max=2000}},
 };
-static const struct behavior_parameter_value_metadata resets[]={COMMAND("초기 설정 복원",FORCE_RESET)};
+static const struct behavior_parameter_value_metadata resets[]={
+    COMMAND("초기 설정 복원",FORCE_RESET), COMMAND("현재 설정 LCD 조회",FORCE_READ)};
 static const struct behavior_parameter_value_metadata zero[]={COMMAND("0",0)};
 static const struct behavior_parameter_metadata_set sets[]={
     {.param1_values=commands,.param1_values_len=ARRAY_SIZE(commands),

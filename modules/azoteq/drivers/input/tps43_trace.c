@@ -78,7 +78,7 @@ static void trace_thread(void *a, void *b, void *c) {
         if (command == 'G') {
             struct toucan_force_levels levels;
             toucan_force_levels_get(&levels);
-            snprintk(line, sizeof(line), "LEVELS,v16,2,%u,%u,%u,%u,%u\n",
+            snprintk(line, sizeof(line), "LEVELS,v17,2,%u,%u,%u,%u,%u\n",
                      levels.lock, levels.press, levels.release,
                      levels.moving_lock, levels.moving_press);
             reply(uart, line);
@@ -99,10 +99,10 @@ static void trace_thread(void *a, void *b, void *c) {
                 full = false;
                 started_ms = now;
                 capturing = true;
-                snprintk(line, sizeof(line), "ARM,v16,2,%u,%u\n", started_ms, TRACE_MS);
+                snprintk(line, sizeof(line), "ARM,v17,2,%u,%u\n", started_ms, TRACE_MS);
             }
         } else if (command == 'S') {
-            snprintk(line, sizeof(line), "STATUS,v16,2,%u,%u,%u,%u,%u,%u,%u\n",
+            snprintk(line, sizeof(line), "STATUS,v17,2,%u,%u,%u,%u,%u,%u,%u\n",
                      capturing, touching, count, full, started_ms, now,
                      (unsigned)sizeof(record));
         } else if (command == 'D') {
@@ -110,7 +110,7 @@ static void trace_thread(void *a, void *b, void *c) {
                 snprintk(line, sizeof(line), "BUSY\n");
             } else {
                 cursor = 0;
-                snprintk(line, sizeof(line), "DATA,v16,2,%u,%u,%u,%u\n",
+                snprintk(line, sizeof(line), "DATA,v17,2,%u,%u,%u,%u\n",
                          count, full, started_ms, (unsigned)sizeof(record));
             }
         } else if (command == 'N') {

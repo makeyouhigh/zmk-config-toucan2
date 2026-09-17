@@ -7,6 +7,8 @@
 #define CONFIG_TOUCAN_FORCE_TRACE 1
 #include "../modules/azoteq/drivers/input/tps43_trace.h"
 #include <toucan/touch_lease.h>
+#include <toucan/force_status.h>
+#include <string.h>
 
 static const struct tps43_force_config config = {
     .lock_level=4250, .press_level=4500, .release_level=4000,
@@ -216,11 +218,13 @@ static void test_adjustable_levels(void) {
     assert(toucan_force_levels_valid(&v));
     for (unsigned command=0;command<=FORCE_RELEASE_DOWN;command++) {
         v=original;
+        if (command==FORCE_RELEASE_UP) v.release-=100;
+        const struct toucan_force_levels start=v;
         assert(toucan_force_levels_adjust(&v,command,100));
         assert(toucan_force_levels_valid(&v));
         assert(v.moving_lock-v.lock==500 && v.moving_press-v.press==500);
         assert(toucan_force_levels_adjust(&v,command^1,100));
-        assert(v.lock==original.lock && v.press==original.press && v.release==original.release);
+        assert(v.lock==start.lock && v.press==start.press && v.release==start.release);
     }
     /* Reject overlap, underflow, overflow and malformed commands atomically. */
     const uint32_t bad[][2]={{FORCE_LOCK_UP,250},{FORCE_LOCK_DOWN,250},
@@ -255,7 +259,68 @@ static void test_adjustable_levels(void) {
     assert(runtime.release_level==3900);
 }
 
+static void test_force_limits(void) {
+    const struct { struct toucan_force_levels value; uint32_t blocked; } cases[]={
+        {{1500,3000,1000,2000,3500},FORCE_LOCK_DOWN},
+        {{5000,6000,1000,5500,6500},FORCE_LOCK_UP},
+        {{1500,2000,1000,2000,2500},FORCE_CLICK_DOWN},
+        {{2000,6000,1000,2500,6500},FORCE_CLICK_UP},
+        {{2000,3000,1000,2500,3500},FORCE_RELEASE_DOWN},
+        {{4500,5000,4000,5000,5500},FORCE_RELEASE_UP},
+    };
+    for (unsigned i=0;i<sizeof(cases)/sizeof(cases[0]);i++) {
+        struct toucan_force_levels v=cases[i].value;
+        assert(toucan_force_levels_valid(&v));
+        assert(!toucan_force_levels_adjust(&v,cases[i].blocked,1));
+        assert(memcmp(&v,&cases[i].value,sizeof(v))==0);
+        assert(toucan_force_levels_adjust(&v,cases[i].blocked^1,100));
+        assert(toucan_force_levels_adjust(&v,cases[i].blocked,100));
+        assert(memcmp(&v,&cases[i].value,sizeof(v))==0);
+        assert(!toucan_force_levels_adjust(&v,cases[i].blocked,2000));
+        assert(memcmp(&v,&cases[i].value,sizeof(v))==0);
+    }
+    struct toucan_force_levels observed={3550,4500,3000,4050,5000};
+    for (int i=0;i<5;i++) assert(toucan_force_levels_adjust(&observed,FORCE_CLICK_DOWN,100));
+    assert(observed.lock==3550 && observed.press==4000 && observed.release==3000 &&
+           observed.moving_lock==4050 && observed.moving_press==4500);
+}
+
+static void test_force_status_transfer(void) {
+    const struct toucan_force_levels a={3550,4500,3000,4050,5000};
+    const struct toucan_force_levels b={3550,4000,3000,4050,4500};
+    struct toucan_force_levels out={0};
+    struct toucan_force_status_rx rx={0};
+    /* No predicted/partial values; changes commit only after all three parts. */
+    assert(!toucan_force_status_receive(&rx,0x30,toucan_force_status_pack(&a,1,0),&out));
+    assert(!toucan_force_status_receive(&rx,0x32,toucan_force_status_pack(&a,1,2),&out));
+    assert(out.lock==0);
+    assert(toucan_force_status_receive(&rx,0x31,toucan_force_status_pack(&a,1,1),&out));
+    assert(memcmp(&out,&a,sizeof(a))==0);
+    assert(!toucan_force_status_receive(&rx,0x30,toucan_force_status_pack(&a,2,0),&out));
+    for (unsigned gen=3;gen<=31;gen++) {
+        assert(!toucan_force_status_receive(&rx,0x31,toucan_force_status_pack(&b,gen,1),&out));
+        assert(!toucan_force_status_receive(&rx,0x32,toucan_force_status_pack(&b,gen,2),&out));
+    }
+    assert(memcmp(&out,&a,sizeof(a))==0); /* lost first part, retain last complete snapshot */
+    assert(toucan_force_status_receive(&rx,0x30,toucan_force_status_pack(&b,31,0),&out));
+    assert(memcmp(&out,&b,sizeof(b))==0);
+    for (unsigned i=0;i<3;i++) {
+        bool done=toucan_force_status_receive(&rx,0x30+i,toucan_force_status_pack(&a,1,i),&out);
+        assert(done==(i==2)); /* generation wraps */
+    }
+    assert(memcmp(&out,&a,sizeof(a))==0);
+    struct toucan_force_levels bad=a; bad.press=7000;
+    for (unsigned i=0;i<3;i++) assert(!toucan_force_status_receive(&rx,0x30+i,
+        toucan_force_status_pack(&bad,2,i),&out));
+    assert(memcmp(&out,&a,sizeof(a))==0);
+    assert(!toucan_force_status_receive(&rx,0x18,2,&out));
+    assert(!toucan_force_status_receive(&rx,0x30,-1,&out));
+    assert(!toucan_force_status_receive(&rx,0x30,0,&out));
+}
+
 int main(void) {
+    test_force_limits();
+    test_force_status_transfer();
     test_adjustable_levels();
     test_initial_contact_never_changes_levels();
     test_fixed_hysteresis_and_short_release();

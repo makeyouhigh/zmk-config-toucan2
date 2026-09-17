@@ -4,6 +4,9 @@
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/sys/atomic.h>
 #include <toucan/force_display.h>
+#include <toucan/force_status.h>
+#include <stdio.h>
+#include "../assets/custom_fonts.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -66,6 +69,37 @@ struct connection_status_state {
 
 static sys_slist_t widgets = SYS_SLIST_STATIC_INIT(&widgets);
 
+static void settings_text(lv_obj_t *canvas, int x, int y, int width,
+                          const lv_font_t *font, const char *text) {
+    lv_draw_label_dsc_t label;
+    init_label_dsc(&label,LVGL_FOREGROUND,font,LV_TEXT_ALIGN_LEFT);
+    lv_canvas_draw_text(canvas,x,y,width,&label,text);
+}
+static void settings_number(lv_obj_t *canvas,int x,int y,bool known,uint16_t value) {
+    char text[8];
+    if (known) snprintf(text,sizeof(text),"%u",(unsigned)value);
+    else snprintf(text,sizeof(text),"----");
+    settings_text(canvas,x,y,64,&quinquefive_12,text);
+}
+static void draw_force_settings(lv_obj_t *canvas,const struct status_state *state) {
+    const struct toucan_force_levels *v=&state->force_levels;
+    settings_text(canvas,4,2,94,&quinquefive_12,"FORCE");
+    settings_text(canvas,108,4,36,&quinquefive_8,"v17");
+    settings_text(canvas,4,20,64,&quinquefive_8,"REST");
+    settings_text(canvas,78,20,64,&quinquefive_8,"MOVE");
+    settings_text(canvas,4,34,136,&quinquefive_8,"Y/H LOCK");
+    settings_number(canvas,4,47,state->force_known,v->lock);
+    settings_number(canvas,78,47,state->force_known,v->moving_lock);
+    settings_text(canvas,4,71,136,&quinquefive_8,"U/J CLICK");
+    settings_number(canvas,4,84,state->force_known,v->press);
+    settings_number(canvas,78,84,state->force_known,v->moving_press);
+    settings_text(canvas,4,108,136,&quinquefive_8,"I/K RELEASE");
+    settings_number(canvas,4,121,state->force_known,v->release);
+    settings_number(canvas,78,121,state->force_known,v->release);
+    settings_text(canvas,4,148,136,&quinquefive_8,
+                  state->force_known ? "LIMITS ACTIVE" : "WAIT RIGHT");
+}
+
 /**
  * Draw buffers
  **/
@@ -77,6 +111,11 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[],
 
     if (is_sleep_screen_active()) {
         draw_sleep_screen(canvas);
+        return;
+    }
+
+    if (state->layer_index == TOUCAN_FORCE_SYS_LAYER) {
+        draw_force_settings(canvas,state);
         return;
     }
 
@@ -219,6 +258,10 @@ ZMK_SUBSCRIPTION(
 
 static void set_layer_status(struct zmk_widget_screen *widget,
                              struct layer_status_state state) {
+    if (state.index==TOUCAN_FORCE_SYS_LAYER && widget->state.layer_index!=TOUCAN_FORCE_SYS_LAYER) {
+        toucan_force_status_request();
+        widget->state.force_known=false;
+    }
     widget->state.layer_index = zmk_keymap_highest_layer_active();
 
     draw_top(widget->obj, widget->cbuf3, &widget->state);
@@ -349,6 +392,18 @@ static void modifiers_refresh_work_cb(struct k_work *work) {
     struct zmk_widget_screen *widget;
 
     SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
+        if (widget->state.layer_index == TOUCAN_FORCE_SYS_LAYER) {
+            struct toucan_force_levels levels;
+            uint32_t revision;
+            bool known=toucan_force_status_get(&levels,&revision);
+            if (widget->state.force_revision != revision || widget->state.force_known != known) {
+                widget->state.force_revision=revision;
+                widget->state.force_known=known;
+                widget->state.force_levels=levels;
+                draw_top(widget->obj,widget->cbuf,&widget->state);
+            }
+            continue;
+        }
         if (widget->state.modifiers != modifiers || widget->state.touch_state != touch) {
             widget->state.modifiers = modifiers;
             widget->state.touch_state = touch;

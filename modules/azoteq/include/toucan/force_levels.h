@@ -4,11 +4,27 @@
 #include <stdint.h>
 #include <dt-bindings/zmk/force.h>
 
+/* User-adjustable operating limits, not physical sensor limits. */
+#define TOUCAN_FORCE_LOCK_MIN 1500
+#define TOUCAN_FORCE_LOCK_MAX 5000
+#define TOUCAN_FORCE_PRESS_MIN 2000
+#define TOUCAN_FORCE_PRESS_MAX 6000
+#define TOUCAN_FORCE_RELEASE_MIN 1000
+#define TOUCAN_FORCE_RELEASE_MAX 4000
+#define TOUCAN_FORCE_MOVING_OFFSET 500
+
 struct toucan_force_levels {
     uint16_t lock, press, release, moving_lock, moving_press;
 };
 static inline bool toucan_force_levels_valid(const struct toucan_force_levels *v) {
-    return v->release > 0 && v->release < v->lock && v->lock < v->press &&
+    return v->lock >= TOUCAN_FORCE_LOCK_MIN && v->lock <= TOUCAN_FORCE_LOCK_MAX &&
+        v->press >= TOUCAN_FORCE_PRESS_MIN && v->press <= TOUCAN_FORCE_PRESS_MAX &&
+        v->release >= TOUCAN_FORCE_RELEASE_MIN && v->release <= TOUCAN_FORCE_RELEASE_MAX &&
+        v->moving_lock >= TOUCAN_FORCE_LOCK_MIN + TOUCAN_FORCE_MOVING_OFFSET &&
+        v->moving_lock <= TOUCAN_FORCE_LOCK_MAX + TOUCAN_FORCE_MOVING_OFFSET &&
+        v->moving_press >= TOUCAN_FORCE_PRESS_MIN + TOUCAN_FORCE_MOVING_OFFSET &&
+        v->moving_press <= TOUCAN_FORCE_PRESS_MAX + TOUCAN_FORCE_MOVING_OFFSET &&
+        v->release < v->lock && v->lock < v->press &&
         v->moving_lock >= v->lock && v->moving_press >= v->press &&
         v->moving_lock < v->moving_press;
 }
@@ -38,3 +54,4 @@ static inline bool toucan_force_levels_adjust(struct toucan_force_levels *v,
 void toucan_force_levels_get(struct toucan_force_levels *levels);
 int toucan_force_levels_command(uint32_t command, uint32_t amount);
 void toucan_force_levels_contact(bool touching);
+void toucan_force_levels_publish(void);
