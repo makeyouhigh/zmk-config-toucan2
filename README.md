@@ -1,4 +1,4 @@
-현재 펌웨어: [v11 — 오른쪽 USB 센서·클릭 상태 진단본](FIRMWARE_VERSIONS.md). v10의 클릭 판정은 유지하며, 실기기 문제 해결을 주장하는 배포본이 아닙니다.
+현재 펌웨어: [v11 — 오른쪽 USB 센서·클릭 상태 진단본](FIRMWARE_VERSIONS.md) · [검증된 빌드](https://github.com/makeyouhigh/zmk-config-toucan2/actions/runs/35181154348). v10의 클릭 판정은 유지하며, 실기기 문제 해결을 주장하는 배포본이 아닙니다.
 
 # ZMK config for beekeeb Toucan2 Keyboard
 
