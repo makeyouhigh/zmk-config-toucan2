@@ -1173,7 +1173,6 @@ static int tps43_configure_device(const struct device *dev) {
  * @return 0 on success, negative error code on failure
  */
 static int check_reset_and_reconfigure(const struct device *dev) {
-    struct tps43_drv_data *drv_data = dev->data;
     int ret;
     uint8_t sys_info = 0;
     uint8_t wait_count = 0;
@@ -1210,7 +1209,6 @@ static int check_reset_and_reconfigure(const struct device *dev) {
         LOG_ERR("Device configuration error: %d", ret);
         return ret;
     }
-
 
     return 0;
 }
