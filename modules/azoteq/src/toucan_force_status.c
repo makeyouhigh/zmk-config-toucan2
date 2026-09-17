@@ -12,6 +12,7 @@ static struct k_spinlock status_lock;
 static struct toucan_force_status_rx receiver;
 static struct toucan_force_levels received_levels;
 static bool available;
+static bool connected;
 static uint32_t revision;
 static atomic_t request_attempts;
 static void request_work(struct k_work *work);
@@ -20,7 +21,7 @@ K_WORK_DELAYABLE_DEFINE(status_request_work,request_work);
 static void receive_status(struct input_event *event) {
     if (event->type != INPUT_EV_ABS) return;
     k_spinlock_key_t key=k_spin_lock(&status_lock);
-    if (toucan_force_status_receive(&receiver,event->code,event->value,&received_levels)) {
+    if (connected && toucan_force_status_receive(&receiver,event->code,event->value,&received_levels)) {
         available=true;
         revision++;
     }
@@ -41,7 +42,7 @@ static void request_work(struct k_work *work) {
     ARG_UNUSED(work);
     struct toucan_force_levels current;
     uint32_t current_revision;
-    if (toucan_force_status_get(&current,&current_revision)) return;
+    if (atomic_get(&request_attempts)>0 && toucan_force_status_get(&current,&current_revision)) return;
     const struct zmk_behavior_binding binding={
         .behavior_dev=DEVICE_DT_NAME(DT_NODELABEL(force_cfg)),.param1=FORCE_READ,.param2=0};
     const struct zmk_behavior_binding_event event={.layer=TOUCAN_FORCE_SYS_LAYER,.timestamp=k_uptime_get()};
@@ -65,6 +66,12 @@ void toucan_force_status_request(void) {
 static int connection_changed(const zmk_event_t *eh) {
     const struct zmk_split_peripheral_status_changed *event=as_zmk_split_peripheral_status_changed(eh);
     if (!event) return ZMK_EV_EVENT_BUBBLE;
+    k_spinlock_key_t key=k_spin_lock(&status_lock);
+    connected=event->connected;
+    available=false;
+    receiver=(struct toucan_force_status_rx){0};
+    revision++;
+    k_spin_unlock(&status_lock,key);
     if (event->connected) {
         toucan_force_status_request();
     } else {
