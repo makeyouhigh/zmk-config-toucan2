@@ -9,6 +9,7 @@
 #include "tps43_force.h"
 #include "tps43_tap.h"
 #include "tps43_three_tap.h"
+#include <toucan/diagnostics.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -282,6 +283,11 @@ struct tps43_drv_data {
     struct tps43_three_tap_state three_tap;
     int64_t force_display_report_ms;
     uint8_t force_display_state;
+    uint32_t diag_live[TOUCAN_DIAG_SOURCE_WORDS];
+    uint32_t diag_snapshot[TOUCAN_DIAG_SOURCE_WORDS];
+    uint32_t diag_sequence;
+    uint8_t diag_phase;
+    int64_t diag_next_ms;
     uint8_t event_config;
     bool force_streaming;
 

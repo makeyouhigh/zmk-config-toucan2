@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include <errno.h>
+#include <stdlib.h>
 #include <zephyr/kernel.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
@@ -9,6 +10,7 @@
 #include <toucan/mouse_queue.h>
 #include <toucan/ble_mouse_policy.h>
 #include <toucan/mouse_window.h>
+#include <toucan/diagnostics.h>
 
 LOG_MODULE_REGISTER(toucan_ble_mouse, CONFIG_ZMK_LOG_LEVEL);
 BUILD_ASSERT(CONFIG_BT_PERIPHERAL_PREF_MAX_INT == TOUCAN_MOUSE_CONN_INTERVAL);
@@ -27,7 +29,19 @@ struct peer_queue {
 static struct peer_queue peers[CONFIG_BT_MAX_CONN];
 static struct k_spinlock queue_lock;
 static struct toucan_mouse_window transmit_window;
+static uint32_t flight_started[TOUCAN_MOUSE_IN_FLIGHT];
 K_SEM_DEFINE(mouse_pending, 0, 1);
+
+static uint8_t flights_used(void) {
+    uint8_t count = 0;
+    for (unsigned int i = 0; i < TOUCAN_MOUSE_IN_FLIGHT; i++) {
+        count += transmit_window.slots[i].token != 0;
+    }
+    return count;
+}
+static uint32_t motion_distance(const struct toucan_mouse_packet *p) {
+    return (uint32_t)abs((int)p->x) + (uint32_t)abs((int)p->y);
+}
 
 /* Called by the normal input listener. Unlike stock hog.c, no 100 ms queue
  * wait and no recursive overflow retry can stall the input thread here. */
@@ -48,6 +62,7 @@ int __wrap_zmk_hog_send_mouse_report(struct zmk_hid_mouse_report_body *report) {
         peer->conn = bt_conn_ref(conn);
     }
     toucan_mouse_push(&peer->reports, p, p.motion_ms);
+    toucan_diag_hid(motion_distance(&p), peer->reports.count);
     k_spin_unlock(&queue_lock, key);
     bt_conn_unref(conn);
     k_sem_give(&mouse_pending);
@@ -58,6 +73,10 @@ static void mouse_sent(struct bt_conn *conn, void *user_data) {
     ARG_UNUSED(conn);
     k_spinlock_key_t key = k_spin_lock(&queue_lock);
     bool completed = toucan_mouse_window_complete(&transmit_window, (uint32_t)(uintptr_t)user_data);
+    if (completed) {
+        unsigned int index = (uint32_t)(uintptr_t)user_data & 1U;
+        toucan_diag_complete(k_uptime_get_32() - flight_started[index], flights_used());
+    }
     k_spin_unlock(&queue_lock, key);
     if (completed) {
         k_sem_give(&mouse_pending);
@@ -133,6 +152,9 @@ static void mouse_sender(void *a, void *b, void *c) {
                 toucan_mouse_pop(&peers[index].reports, &p, k_uptime_get())) {
                 conn = bt_conn_ref(peers[index].conn);
                 tag = toucan_mouse_window_acquire(&transmit_window, (uintptr_t)conn);
+                flight_started[tag & 1U] = k_uptime_get_32();
+                toucan_diag_tx_start((uint32_t)(k_uptime_get() - p.motion_ms),
+                                     peers[index].reports.count, flights_used());
                 next_peer = (index + 1U) % ARRAY_SIZE(peers);
                 break;
             }
@@ -160,7 +182,9 @@ static void mouse_sender(void *a, void *b, void *c) {
         /* Zephyr v3.5 may wait for a Bluetooth buffer here, even on its system
          * queue. Isolate that wait on this thread, away from input, key HID,
          * sensor, layer recovery and display processing. */
+        uint32_t notify_started = k_uptime_get_32();
         int err = bt_gatt_notify_cb(conn, &params);
+        toucan_diag_tx_result(k_uptime_get_32() - notify_started, err, motion_distance(&p));
         /* Keep a second notification ready while the preceding completion
          * callback is pending. Stop-and-wait can leave the next event empty;
          * host arrivals measured 30 ms on a 15 ms link. Never exceed two in flight. */

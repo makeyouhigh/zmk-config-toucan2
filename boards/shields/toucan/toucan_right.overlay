@@ -83,6 +83,8 @@
         force-click-settle-ms = <64>;
         force-click-motion-threshold = <6>;
         force-click-drag-threshold = <48>;
+        force-click-drag-hold-ms = <300>;
+        force-click-repeat-ms = <400>;
         report-rate-active = <8>;
         report-rate-idle-touch = <8>;
         timeout-idle-touch = <255>;

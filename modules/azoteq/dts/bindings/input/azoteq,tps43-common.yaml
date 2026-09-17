@@ -21,8 +21,8 @@ properties:
     default: 16
     description: |
       Release when the increase falls to the larger of this value and the
-      percentage threshold or below. A drop from the click peak by the resting
-      press threshold also releases a stationary click. A started drag stays
+      percentage threshold or below. A drop from the click peak by this release
+      threshold also releases a stationary click. A started drag stays
       pressed until lift or invalid/lost contact.
 
   force-click-moving-threshold:
@@ -88,10 +88,27 @@ properties:
     type: int
     default: 24
     description: |
-      Displacement along either absolute sensor axis from the confirmed press
-      position required to start dragging. Smaller movements are discarded.
+      Displacement along either absolute sensor axis after drag-hold-ms has
+      elapsed required to start dragging. Earlier deformation is discarded.
       Uses sensor coordinate units, not screen pixels. Must be at least the
       motion threshold and no more than 65535.
+
+  force-click-drag-hold-ms:
+    type: int
+    default: 300
+    description: |
+      Hold a force press for this duration before new movement can latch a drag.
+      Button-down is immediate after debounce; ordinary motion is not delayed.
+      Must be between 0 and 1000 milliseconds.
+
+  force-click-repeat-ms:
+    type: int
+    default: 400
+    description: |
+      After a stationary click releases, allow a renewed rise by the release
+      band from its trough to make another click. Deliberate travel or lift
+      cancels this window. Does not defer any button event or move the cursor.
+      Must be between 0 and 1000 milliseconds. Zero disables repeat assistance.
 
   rdy-gpios:
     type: phandle-array

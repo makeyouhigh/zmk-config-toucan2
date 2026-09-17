@@ -6,6 +6,7 @@
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zmk/keymap.h>
 #include <toucan/touch_lease.h>
+#include <toucan/diagnostics.h>
 
 #if DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
 
@@ -50,6 +51,9 @@ static void touch_guard_work_cb(struct k_work *work) {
 }
 
 static void touch_guard_input(struct input_event *event) {
+#if defined(CONFIG_ZMK_BLE) && defined(CONFIG_ZMK_POINTING)
+    toucan_diag_input(event);
+#endif
     int64_t now = k_uptime_get();
     bool handled = true;
     k_spinlock_key_t key = k_spin_lock(&lease_lock);

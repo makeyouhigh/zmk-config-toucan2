@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <string.h>
 #define DT_DRV_COMPAT azoteq_tps43
 
 #include <zephyr/device.h>
@@ -24,8 +25,58 @@ static void tps43_power_work(struct k_work *work);
 
 static void tps43_force_report(const struct device *dev, enum tps43_force_event event) {
     if (event != TPS43_FORCE_NONE) {
+        struct tps43_drv_data *data = dev->data;
+        if (event == TPS43_FORCE_PRESS) {
+            data->diag_live[7] = data->diag_live[6] & 0xffffU;
+            data->diag_live[9] = (data->diag_live[9] & 0xffff0000U) |
+                ((data->diag_live[9] + 1U) & 0xffffU);
+        } else {
+            data->diag_live[8] = data->diag_live[6] & 0xffffU;
+            data->diag_live[9] += 0x10000U;
+        }
         input_report_key(dev, INPUT_BTN_0, event == TPS43_FORCE_PRESS, true, K_MSEC(5));
         LOG_DBG("Force click %s", event == TPS43_FORCE_PRESS ? "down" : "up");
+    }
+}
+
+/* One optional unsynchronized diagnostic event per 100 ms, with no waiting.
+ * A complete snapshot needs matching sequence markers at the central. */
+static void tps43_diagnostic_sample(const struct device *dev, int64_t now,
+                                    uint8_t fingers, bool valid, uint16_t strength,
+                                    int16_t dx, int16_t dy) {
+    struct tps43_drv_data *d = dev->data;
+    uint32_t distance = (uint32_t)abs((int)dx) + (uint32_t)abs((int)dy);
+    d->diag_live[0] = (uint32_t)now;
+    d->diag_live[1]++;
+    if (valid && fingers == 1 && distance) {
+        d->diag_live[2]++;
+        d->diag_live[3] += distance;
+        if (d->force.suppress_motion) {
+            d->diag_live[4]++;
+            d->diag_live[5] += distance;
+        }
+    }
+    d->diag_live[6] = strength | ((uint32_t)fingers << 16) |
+        ((uint32_t)d->force.down << 24) | ((uint32_t)d->force.dragging << 25) |
+        ((uint32_t)d->force.suppress_motion << 26) |
+        ((uint32_t)d->force.candidate << 27) | ((uint32_t)d->force.ready << 28);
+    d->diag_live[10] = d->force.baseline;
+    if (now < d->diag_next_ms) { return; }
+    if (!d->diag_phase) {
+        memcpy(d->diag_snapshot, d->diag_live, sizeof(d->diag_snapshot));
+        d->diag_sequence++;
+    }
+    uint32_t value = (d->diag_phase == 0 ||
+                     d->diag_phase == TOUCAN_DIAG_SOURCE_WORDS + 1)
+        ? d->diag_sequence : d->diag_snapshot[d->diag_phase - 1];
+    /* Diagnostics can be dropped; they must never hold up sensor processing. */
+    input_report_abs(dev, TOUCAN_DIAG_CODE_BASE + d->diag_phase,
+                     (int32_t)value, false, K_NO_WAIT);
+    if (++d->diag_phase == TOUCAN_DIAG_SOURCE_WORDS + 2) {
+        d->diag_phase = 0;
+        d->diag_next_ms = now + 800;
+    } else {
+        d->diag_next_ms = now + 100;
     }
 }
 
@@ -563,8 +614,10 @@ static void tps43_work_handler(struct k_work *work) {
                 config->tap_time >= 0 ? config->tap_time : 200,
                 config->tap_distance >= 0 ? config->tap_distance : 16);
         }
+        drv_data->diag_live[6] = strength;
         tps43_force_report(dev, tps43_force_step(&drv_data->force, &config->force,
                                                sample_ms, num_fingers, strength, valid, x, y));
+        tps43_diagnostic_sample(dev, sample_ms, num_fingers, valid, strength, rel_x, rel_y);
         if (config->single_tap) {
             software_tap = tps43_tap_step(&drv_data->tap, sample_ms, num_fingers,
                                            valid, drv_data->force.tap_consumed, x, y,
@@ -1645,6 +1698,8 @@ static int tps43_init(const struct device *dev) {
             .moving_press_delta = DT_INST_PROP(inst, force_click_moving_threshold),                 \
             .moving_press_percent = DT_INST_PROP(inst, force_click_moving_threshold_percent),       \
             .motion_settle_ms = DT_INST_PROP(inst, force_click_motion_settle_ms),                    \
+            .drag_hold_ms = DT_INST_PROP(inst, force_click_drag_hold_ms),                            \
+            .repeat_ms = DT_INST_PROP(inst, force_click_repeat_ms),                                  \
         },                                                                                         \
         .two_finger_tap = DT_INST_PROP(inst, two_finger_tap),                                        \
         .three_finger_tap = DT_INST_PROP(inst, three_finger_tap),                                    \
@@ -1704,6 +1759,10 @@ static int tps43_init(const struct device *dev) {
     BUILD_ASSERT(DT_INST_REG_ADDR(inst) == TPS43_I2C_ADDR, "I2C address mismatch");                     \
     BUILD_ASSERT(!DT_INST_PROP(inst, three_finger_tap) || DT_INST_PROP(inst, force_click),             \
                  "Three finger tap requires streaming force mode");                                \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_drag_hold_ms) >= 0 &&                                \
+                 DT_INST_PROP(inst, force_click_drag_hold_ms) <= 1000, "Invalid drag hold");         \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_repeat_ms) >= 0 &&                                   \
+                 DT_INST_PROP(inst, force_click_repeat_ms) <= 1000, "Invalid repeat window");        \
     BUILD_ASSERT(DT_INST_PROP(inst, force_click_moving_threshold) >=                                 \
                  DT_INST_PROP(inst, force_click_threshold) &&                                       \
                  DT_INST_PROP(inst, force_click_moving_threshold) <= UINT16_MAX,                     \
