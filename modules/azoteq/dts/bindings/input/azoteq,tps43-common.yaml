@@ -78,8 +78,17 @@ properties:
     type: int
     default: 16
     description: |
-      Required continuous duration above/below the press/release thresholds
+      Required continuous duration above the click threshold
       in milliseconds (0 to 1000). Invalid input releases immediately.
+
+  force-click-release-debounce-ms:
+    type: int
+    default: 8
+    description: |
+      Continuous duration below the release threshold before releasing a
+      stationary force click (1 to 1000 ms). At least two reports are required.
+      Keep the lowest strength seen during confirmation for the next squeeze.
+      Active drags remain held until lift or invalid/lost contact.
 
   force-click-settle-ms:
     type: int
@@ -291,11 +300,14 @@ properties:
     type: boolean
     required: false
     description: |
-      Enable press and hold. With force-click enabled, stationary contact for
-      hold-time arms a software drag; moving beyond force-click-motion-threshold
-      then presses the left button. Holding alone does not click or suppress
-      motion. Force candidates take priority, and a completed force click
-      disables timed hold until all fingers lift. A started drag stays held until
+      Enable press and hold. With force-click enabled, initial stationary contact
+      for hold-time arms a software drag. Travel beyond force-click-drag-threshold
+      then presses the left button. Movement before the hold interval or a
+      squeeze attempt disables timed hold until lift; pausing later does not
+      rearm it. Holding alone does not click. Initial armed-drag displacement is
+      discarded until the deliberate distance is reached. Force candidates take
+      priority. A completed force click disables timed hold until lift.
+      A started drag stays held until
       lift; invalid data, multiple fingers or stale input also release it.
       Without force-click, use the sensor's native press-and-hold gesture.
 
@@ -563,7 +575,7 @@ properties:
     required: false
     description: |
       Minimum time for a press-and-hold gesture in milliseconds (2 bytes).
-      With force-click, arms software hold-to-drag after this stationary interval;
+      With force-click, arms software hold-to-drag after this initial stationary interval;
       defaults to 250 ms when omitted. The button goes down on subsequent travel.
       Sets the minimum duration a finger must be held to trigger a hold gesture.
       Written to the HOLD_TIME register (0x06BD).

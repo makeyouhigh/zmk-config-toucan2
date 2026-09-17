@@ -1624,6 +1624,7 @@ static int tps43_init(const struct device *dev) {
             .release_delta = DT_INST_PROP(inst, force_click_release_threshold),                     \
             .baseline_ms = DT_INST_PROP(inst, force_click_baseline_ms),                              \
             .debounce_ms = DT_INST_PROP(inst, force_click_debounce_ms),                              \
+            .release_debounce_ms = DT_INST_PROP(inst, force_click_release_debounce_ms),              \
             .press_percent = DT_INST_PROP(inst, force_click_threshold_percent),                     \
             .release_percent = DT_INST_PROP(inst, force_click_release_threshold_percent),           \
             .motion_threshold = DT_INST_PROP(inst, force_click_motion_threshold),                   \
@@ -1724,6 +1725,9 @@ static int tps43_init(const struct device *dev) {
                  DT_INST_PROP(inst, force_click_baseline_ms) <= 1000, "Invalid baseline interval");  \
     BUILD_ASSERT(DT_INST_PROP(inst, force_click_debounce_ms) >= 0 &&                                  \
                  DT_INST_PROP(inst, force_click_debounce_ms) <= 1000, "Invalid debounce interval");  \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_release_debounce_ms) > 0 &&                           \
+                 DT_INST_PROP(inst, force_click_release_debounce_ms) <= 1000,                       \
+                 "Invalid release debounce interval");                                             \
     BUILD_ASSERT(DT_INST_PROP(inst, force_click_threshold_percent) <= 100 &&                          \
                  DT_INST_PROP(inst, force_click_release_threshold_percent) >= 0 &&                  \
                  DT_INST_PROP(inst, force_click_threshold_percent) >=                               \

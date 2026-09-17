@@ -9,7 +9,7 @@
 
 static const struct tps43_force_config config = {
     .press_delta = 30, .release_delta = 16, .press_percent = 8, .release_percent = 3,
-    .baseline_ms = 40, .debounce_ms = 16, .settle_ms = 64,
+    .baseline_ms = 40, .debounce_ms = 16, .release_debounce_ms = 8, .settle_ms = 64,
     .motion_threshold = 6, .drag_threshold = 48,
     .moving_press_delta = 90, .moving_press_percent = 24, .motion_settle_ms = 32,
     .drag_hold_ms = 300, .repeat_ms = 400,
@@ -34,8 +34,8 @@ static void press(struct fixture *f, uint16_t strength) {
 }
 static void release(struct fixture *f, uint16_t strength) {
     assert(sample(f,strength)==0);
-    assert(sample(f,strength)==0);
     assert(sample(f,strength)==TPS43_FORCE_RELEASE);
+    assert(sample(f,strength)==0);
 }
 
 static void hold_for_drag(struct fixture *f, uint16_t strength) {
@@ -499,13 +499,17 @@ static void touch_hold_rest(struct fixture *f, int64_t end) {
 static void test_touch_hold_boundary_and_latch(void) {
     struct fixture f=fresh(); touch_hold_rest(&f,248);
     f.x+=7; assert(touch_hold_frame(&f,249,1,1000,true)==0);
-    assert(!f.s.down); /* Movement before 250 ms restarts the rest interval. */
+    assert(!f.s.down && f.s.hold_cancelled);
     for (int64_t t=257;t<499;t+=8) assert(touch_hold_frame(&f,t,1,1000,true)==0);
-    f.x+=7; assert(touch_hold_frame(&f,499,1,1000,true)==TPS43_FORCE_PRESS);
+    f.x+=49; assert(touch_hold_frame(&f,499,1,1000,true)==0 && !f.s.down);
+    /* Once cursor travel begins, even a later pause cannot arm timed hold. */
+    assert(touch_hold_frame(&f,507,0,0,true)==0);
+    for (int64_t t=515;t<765;t+=8) assert(touch_hold_frame(&f,t,1,1000,true)==0);
+    f.x+=49; assert(touch_hold_frame(&f,765,1,1000,true)==TPS43_FORCE_PRESS);
     assert(f.s.dragging && f.s.down && f.s.tap_consumed && !f.s.suppress_motion);
     for (int i=1;i<=120;i++) {
         f.x++;
-        assert(touch_hold_frame(&f,499+i*8,1,(uint16_t)(i%2 ? 0 : 1600),true)==0);
+        assert(touch_hold_frame(&f,765+i*8,1,(uint16_t)(i%2 ? 0 : 1600),true)==0);
         assert(f.s.down && f.s.dragging && !f.s.suppress_motion);
     }
     assert(touch_hold_frame(&f,f.t+8,0,0,true)==TPS43_FORCE_RELEASE);
@@ -521,7 +525,7 @@ static void test_touch_hold_waiting_and_jitter(void) {
     /* Holding/jitter alone does not emit a click, even beyond double-click time. */
     assert(touch_hold_frame(&f,4008,0,0,true)==0);
     f=fresh(); touch_hold_rest(&f,248);
-    f.x+=7; assert(touch_hold_frame(&f,250,1,1000,true)==TPS43_FORCE_PRESS);
+    f.x+=49; assert(touch_hold_frame(&f,250,1,1000,true)==TPS43_FORCE_PRESS);
 }
 static void test_touch_hold_travel_then_stop(void) {
     for (int step=1;step<=10;step+=9) {
@@ -534,8 +538,11 @@ static void test_touch_hold_travel_then_stop(void) {
         for (int64_t t=2008;t<=2256;t+=8)
             assert(touch_hold_frame(&f,t,1,1000,true)==0);
         f.x+=7;
-        assert(touch_hold_frame(&f,2264,1,1000,true)==TPS43_FORCE_PRESS);
-        assert(!f.s.suppress_motion);
+        assert(touch_hold_frame(&f,2264,1,1000,true)==0);
+        assert(!f.s.down && !f.s.suppress_motion);
+        /* Force click remains available after movement and a pause. */
+        for (int i=0;i<5;i++) assert(sample(&f,1000)==0);
+        press(&f,1100); release(&f,1000);
     }
 }
 static void test_touch_hold_force_priority(void) {
@@ -547,8 +554,8 @@ static void test_touch_hold_force_priority(void) {
     assert(touch_hold_frame(&f,432,1,1100,true)==TPS43_FORCE_PRESS);
     assert(f.s.down && !f.s.dragging && f.s.suppress_motion);
     assert(touch_hold_frame(&f,440,1,1000,true)==0);
-    assert(touch_hold_frame(&f,448,1,1000,true)==0);
-    assert(touch_hold_frame(&f,456,1,1000,true)==TPS43_FORCE_RELEASE);
+    assert(touch_hold_frame(&f,448,1,1000,true)==TPS43_FORCE_RELEASE);
+    assert(touch_hold_frame(&f,456,1,1000,true)==0);
     /* Time passing between squeezes cannot take ownership of the button. */
     for (int64_t t=464;t<=744;t+=8) assert(touch_hold_frame(&f,t,1,1000,true)==0);
     assert(touch_hold_frame(&f,752,1,1100,true)==0);
@@ -556,8 +563,8 @@ static void test_touch_hold_force_priority(void) {
     assert(touch_hold_frame(&f,768,1,1100,true)==TPS43_FORCE_PRESS);
     assert(!f.s.dragging);
     assert(touch_hold_frame(&f,776,1,1000,true)==0);
-    assert(touch_hold_frame(&f,784,1,1000,true)==0);
-    assert(touch_hold_frame(&f,792,1,1000,true)==TPS43_FORCE_RELEASE);
+    assert(touch_hold_frame(&f,784,1,1000,true)==TPS43_FORCE_RELEASE);
+    assert(touch_hold_frame(&f,792,1,1000,true)==0);
     for (int64_t t=800;t<=1600;t+=8) assert(touch_hold_frame(&f,t,1,1000,true)==0);
     f.x+=7; assert(touch_hold_frame(&f,1608,1,1000,true)==0 && !f.s.dragging);
 }
@@ -578,7 +585,7 @@ static void test_touch_hold_tap_and_gesture_recovery(void) {
     }
     for (int reason=0;reason<3;reason++) {
         struct fixture f=fresh(); touch_hold_rest(&f,248);
-        f.x+=7; assert(touch_hold_frame(&f,250,1,1000,true)==TPS43_FORCE_PRESS);
+        f.x+=49; assert(touch_hold_frame(&f,250,1,1000,true)==TPS43_FORCE_PRESS);
         int64_t cancel=reason==2 ? 501 : 258;
         assert(touch_hold_frame(&f,cancel,reason==0 ? 2 : 1,1000,
                                  reason!=1)==TPS43_FORCE_RELEASE);
@@ -590,7 +597,7 @@ static void test_touch_hold_tap_and_gesture_recovery(void) {
         int64_t start=f.t+8;
         for (int64_t t=start;t<start+250;t+=8)
             assert(touch_hold_frame(&f,t,1,1000,true)==0);
-        f.x+=7;
+        f.x+=49;
         assert(touch_hold_frame(&f,start+250,1,1000,true)==TPS43_FORCE_PRESS);
     }
 }
@@ -751,17 +758,105 @@ static void test_v9_prepress_cancel_and_repeat(void) {
     assert(!f.s.down && f.s.tap_consumed);
 }
 
+static void test_v10_quick_release_and_trough(void) {
+    struct fixture f=fresh(); rest(&f,1000);
+    for (int cycle=0;cycle<6;cycle++) {
+        press(&f,1100);
+        assert(sample(&f,1060)==0 && f.s.down);
+        assert(sample(&f,1060)==TPS43_FORCE_RELEASE && !f.s.down);
+    }
+    f=fresh(); rest(&f,1000); press(&f,1100);
+    /* One deep outlier cannot release; a real two-report relaxation can. */
+    assert(sample(&f,1000)==0 && f.s.down);
+    assert(sample(&f,1100)==0 && f.s.down && !f.s.candidate);
+    assert(sample(&f,1060)==0);
+    assert(sample(&f,1070)==TPS43_FORCE_RELEASE);
+    assert(f.s.baseline==1060); /* Do not learn the already rising rebound. */
+    press(&f,1100);
+    release(&f,1060);
+}
+
+static void test_v10_slow_precision_never_rearms_hold(void) {
+    const int intervals[]={16,40,80,120};
+    for (unsigned k=0;k<sizeof(intervals)/sizeof(*intervals);k++) {
+        for (int axis=0;axis<2;axis++) {
+            for (int sign=-1;sign<=1;sign+=2) {
+                struct fixture f=fresh();
+                for (int t=0;t<=10000;t+=8) {
+                    /* Slow travel has many zero-motion reports. Longer pauses
+                     * later in the same contact must not turn it into a drag. */
+                    bool pause=t>=2400 && t<3200;
+                    if (t && !pause && t%intervals[k]==0) {
+                        if (axis) f.y=(uint16_t)(f.y+sign);
+                        else f.x=(uint16_t)(f.x+sign);
+                    }
+                    assert(touch_hold_frame(&f,t,1,1000,true)==0);
+                    assert(!f.s.down && !f.s.dragging && !f.s.suppress_motion);
+                }
+                assert(f.s.hold_cancelled);
+                for (int i=0;i<50;i++) assert(touch_hold_frame(&f,f.t+8,1,1000,true)==0);
+                /* Force click still works without lifting after precision work. */
+                for (int i=0;i<3;i++)
+                    assert(touch_hold_frame(&f,f.t+8,1,1100,true)==(i==2 ? 1 : 0));
+                assert(!f.s.dragging);
+            }
+        }
+    }
+}
+
+static void test_v10_hold_requires_deliberate_distance(void) {
+    struct fixture f=fresh(); touch_hold_rest(&f,248);
+    f.x+=6; assert(touch_hold_frame(&f,250,1,1000,true)==0 && !f.s.suppress_motion);
+    f.x++; assert(touch_hold_frame(&f,258,1,1000,true)==0 && f.s.suppress_motion);
+    f.x+=41; assert(touch_hold_frame(&f,266,1,1000,true)==0 && !f.s.down);
+    f.x++; assert(touch_hold_frame(&f,274,1,1000,true)==TPS43_FORCE_PRESS);
+    assert(f.s.dragging && !f.s.suppress_motion);
+    assert(touch_hold_frame(&f,282,1,0,true)==0 && f.s.down && !f.s.suppress_motion);
+    assert(touch_hold_frame(&f,290,0,0,true)==TPS43_FORCE_RELEASE);
+
+    f=fresh(); touch_hold_rest(&f,248);
+    for (int64_t t=256;t<=1000;t+=8) {
+        f.x=(uint16_t)(1000+(t%16 ? 20 : -20));
+        assert(touch_hold_frame(&f,t,1,1000,true)==0 && !f.s.down);
+    }
+    for (int i=0;i<3;i++)
+        assert(touch_hold_frame(&f,f.t+8,1,1100,true)==(i==2 ? 1 : 0));
+    assert(!f.s.dragging); /* A squeeze overrides an armed but unstarted hold. */
+}
+
+static void test_v10_repeat_rise_precedes_coordinate_cancel(void) {
+    const int offsets[]={12,24,48,72};
+    for (unsigned i=0;i<sizeof(offsets)/sizeof(*offsets);i++) {
+        for (int direction=-1;direction<=1;direction+=2) {
+            struct fixture f=fresh(); rest(&f,1000); press(&f,1100); release(&f,1060);
+            f.x=(uint16_t)(f.x+direction*offsets[i]);
+            f.y=(uint16_t)(f.y-direction*offsets[i]);
+            press(&f,1100);
+            assert(f.s.suppress_motion && !f.s.dragging);
+            release(&f,1060);
+        }
+    }
+    struct fixture f=fresh(); rest(&f,1000); press(&f,1100); release(&f,1060);
+    f.x+=TPS43_FORCE_PRESS_TRAVEL_LIMIT+1;
+    for (int i=0;i<3;i++) assert(sample(&f,1100)==0 && !f.s.down);
+    assert(!f.s.repeat_until_ms);
+}
+
 int main(void) {
-    test_v9_lock_and_click_are_separate();
-    test_v9_moving_lock_and_drag_bypass();
-    test_v9_prepress_cancel_and_repeat();
-    test_repeat_jitter_button_order_and_position();
-    test_repeat_candidate_travel_and_expiry();
-    test_touch_hold_boundary_and_latch();
-    test_touch_hold_waiting_and_jitter();
-    test_touch_hold_travel_then_stop();
-    test_touch_hold_force_priority();
-    test_touch_hold_tap_and_gesture_recovery();
+    test_v10_quick_release_and_trough();
+    test_v10_slow_precision_never_rearms_hold();
+    test_v10_hold_requires_deliberate_distance();
+    test_v10_repeat_rise_precedes_coordinate_cancel();
+    puts("test_v9_lock_and_click_are_separate"); fflush(stdout); test_v9_lock_and_click_are_separate();
+    puts("test_v9_moving_lock_and_drag_bypass"); fflush(stdout); test_v9_moving_lock_and_drag_bypass();
+    puts("test_v9_prepress_cancel_and_repeat"); fflush(stdout); test_v9_prepress_cancel_and_repeat();
+    puts("test_repeat_jitter_button_order_and_position"); fflush(stdout); test_repeat_jitter_button_order_and_position();
+    puts("test_repeat_candidate_travel_and_expiry"); fflush(stdout); test_repeat_candidate_travel_and_expiry();
+    puts("test_touch_hold_boundary_and_latch"); fflush(stdout); test_touch_hold_boundary_and_latch();
+    puts("test_touch_hold_waiting_and_jitter"); fflush(stdout); test_touch_hold_waiting_and_jitter();
+    puts("test_touch_hold_travel_then_stop"); fflush(stdout); test_touch_hold_travel_then_stop();
+    puts("test_touch_hold_force_priority"); fflush(stdout); test_touch_hold_force_priority();
+    puts("test_touch_hold_tap_and_gesture_recovery"); fflush(stdout); test_touch_hold_tap_and_gesture_recovery();
     puts("test_squeeze_rebound_must_not_latch_drag"); fflush(stdout); test_squeeze_rebound_must_not_latch_drag();
     puts("test_repeat_from_local_trough"); fflush(stdout); test_repeat_from_local_trough();
     puts("test_early_motion_is_not_replayed_as_drag"); fflush(stdout); test_early_motion_is_not_replayed_as_drag();

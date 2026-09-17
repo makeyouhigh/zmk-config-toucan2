@@ -82,6 +82,7 @@
         force-click-release-threshold-percent = <3>;
         force-click-baseline-ms = <40>;
         force-click-debounce-ms = <16>;
+        force-click-release-debounce-ms = <8>;
         force-click-settle-ms = <64>;
         force-click-motion-threshold = <6>;
         force-click-drag-threshold = <48>;
