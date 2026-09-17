@@ -6,6 +6,7 @@
 #include <toucan/force_display.h>
 #include <toucan/force_status.h>
 #include <stdio.h>
+#include <lvgl.h>
 #include "../assets/custom_fonts.h"
 
 #include <zephyr/logging/log.h>

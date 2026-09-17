@@ -7,6 +7,9 @@
 #define TOUCAN_FORCE_STATUS_CODE 0x30
 #define TOUCAN_FORCE_STATUS_PARTS 3
 #define TOUCAN_FORCE_SYS_LAYER 7
+_Static_assert(TOUCAN_FORCE_LOCK_MAX+TOUCAN_FORCE_MOVING_OFFSET<=8191 &&
+               TOUCAN_FORCE_PRESS_MAX+TOUCAN_FORCE_MOVING_OFFSET<=8191 &&
+               TOUCAN_FORCE_RELEASE_MAX<=8191,"Force settings exceed display packet width");
 struct toucan_force_status_rx {
     uint16_t values[6];
     uint8_t generation, mask;
