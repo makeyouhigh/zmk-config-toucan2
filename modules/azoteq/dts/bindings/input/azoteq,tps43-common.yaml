@@ -21,7 +21,24 @@ properties:
     default: 16
     description: |
       Release when the increase falls to the larger of this value and the
-      percentage threshold or below. Finger lift releases immediately.
+      percentage threshold or below. A drop from the click peak by the resting
+      press threshold also releases a stationary click. A started drag stays
+      pressed until lift or invalid/lost contact.
+
+  force-click-moving-threshold:
+    type: int
+    default: 90
+    description: Minimum strength rise to start a click during pointer movement.
+
+  force-click-moving-threshold-percent:
+    type: int
+    default: 24
+    description: Moving click threshold as a percentage of baseline; the absolute minimum also applies.
+
+  force-click-motion-settle-ms:
+    type: int
+    default: 32
+    description: Time without deliberate travel before returning to the resting click threshold. Does not delay pointer movement.
 
   force-click-threshold-percent:
     type: int
@@ -61,9 +78,9 @@ properties:
     type: int
     default: 6
     description: |
-      Recent movement tolerance in sensor units. Travel that starts before a
-      squeeze blocks new clicks until 16 ms after movement settles. Bounded
-      jitter does not restart the guard. Strength changes after stopping are
+      Recent movement tolerance in sensor units. Deliberate travel selects the
+      higher moving press threshold. Bounded jitter does not restart settling.
+      Strength changes after stopping are
       kept for the next squeeze instead of absorbed into the resting baseline.
       A squeeze candidate allows centroid displacement.
 
@@ -193,6 +210,14 @@ properties:
     type: boolean
     required: false
     description: Enable two-finger tap gesture
+
+  three-finger-tap:
+    type: boolean
+    description: |
+      With force-click enabled, recognize a three-finger tap in software and
+      emit one middle-button click when all fingers lift. Uses tap-time and
+      tap-distance, defaulting to 200 ms and 16 sensor units. Holds and swipes
+      do not click. Suppresses other tap buttons for that contact.
 
   scroll:
     type: boolean

@@ -74,6 +74,9 @@
         force-click-threshold = <30>;
         force-click-release-threshold = <16>;
         force-click-threshold-percent = <8>;
+        force-click-moving-threshold = <90>;
+        force-click-moving-threshold-percent = <24>;
+        force-click-motion-settle-ms = <32>;
         force-click-release-threshold-percent = <3>;
         force-click-baseline-ms = <40>;
         force-click-debounce-ms = <16>;
@@ -87,6 +90,7 @@
         //zoom;
         scroll;
         two-finger-tap;
+        three-finger-tap;
         single-tap;
         // 시간 기반 길게 누르기는 포스터치로 대체합니다.
         //swipes;

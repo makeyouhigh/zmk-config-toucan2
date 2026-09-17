@@ -50,6 +50,7 @@ static void tps43_force_display_report(const struct device *dev, uint8_t value) 
 static void tps43_force_cancel_and_report(const struct device *dev) {
     struct tps43_drv_data *data = dev->data;
     tps43_tap_cancel(&data->tap);
+    tps43_three_tap_cancel(&data->three_tap);
     k_work_cancel_delayable(&data->force_watchdog);
     tps43_force_report(dev, tps43_force_cancel(&data->force, true));
     if (data->touching) {
@@ -457,6 +458,7 @@ static void tps43_work_handler(struct k_work *work) {
     bool is_drag_active = drv_data->drag_active;
     bool communication_closed = false;
     bool software_tap = false;
+    struct tps43_three_tap_result three_tap = {0};
     int ret;
 
     // If device is in suspend, ignore interrupt (RDY should be disabled)
@@ -553,6 +555,14 @@ static void tps43_work_handler(struct k_work *work) {
         bool valid = !(touch_data[3] & (TPS43_PALM_DETECT | TPS43_TOO_MANY_FINGERS)) &&
                      (num_fingers == 0 || area != 0);
         is_touching = is_touching && valid;
+        if (config->three_finger_tap) {
+            bool consumed = drv_data->force.down ||
+                (drv_data->force.tap_consumed && !drv_data->force.blocked);
+            three_tap = tps43_three_tap_step(&drv_data->three_tap, sample_ms,
+                num_fingers, valid, consumed, x, y,
+                config->tap_time >= 0 ? config->tap_time : 200,
+                config->tap_distance >= 0 ? config->tap_distance : 16);
+        }
         tps43_force_report(dev, tps43_force_step(&drv_data->force, &config->force,
                                                sample_ms, num_fingers, strength, valid, x, y));
         if (config->single_tap) {
@@ -580,7 +590,11 @@ static void tps43_work_handler(struct k_work *work) {
         input_report_key(dev, INPUT_BTN_TOUCH, is_touching ? 1 : 0, true, K_MSEC(5));
     }
 
-    if (software_tap) {
+    if (three_tap.click) {
+        input_report_key(dev, INPUT_BTN_2, 1, true, K_MSEC(5));
+        input_report_key(dev, INPUT_BTN_2, 0, true, K_MSEC(5));
+    }
+    if (software_tap && !three_tap.claimed) {
         input_report_key(dev, INPUT_BTN_0, 1, true, K_MSEC(5));
         input_report_key(dev, INPUT_BTN_0, 0, true, K_MSEC(5));
     }
@@ -599,7 +613,7 @@ static void tps43_work_handler(struct k_work *work) {
             LOG_INF("Single finger swipe");
             tps43_handle_swipe(dev, num_fingers, rel_x, rel_y);
         }
-        if (gestures_events[1] & TPS43_TWO_FINGER_TAP) {
+        if (!three_tap.claimed && (gestures_events[1] & TPS43_TWO_FINGER_TAP)) {
             LOG_INF("Two finger tap → RIGHT BUTTON");
             input_report_key(dev, INPUT_BTN_1, 1, true, K_MSEC(5));
             input_report_key(dev, INPUT_BTN_1, 0, true, K_MSEC(5));
@@ -611,11 +625,13 @@ static void tps43_work_handler(struct k_work *work) {
             is_drag_active = true;
             input_report_key(dev, INPUT_BTN_0, 1, true, K_MSEC(5));
         }
-        if (gestures_events[1] & TPS43_SCROLL) {
+        if (tps43_two_finger_motion(num_fingers, three_tap.claimed) &&
+            (gestures_events[1] & TPS43_SCROLL)) {
             // set scroll flag for processing in tp_movement block
             is_scroll_active = true;
         }
-        if (gestures_events[1] & TPS43_ZOOM) {
+        if (tps43_two_finger_motion(num_fingers, three_tap.claimed) &&
+            (gestures_events[1] & TPS43_ZOOM)) {
             // set zoom flag for processing in tp_movement block
             is_zoom_active = true;
         }
@@ -659,7 +675,8 @@ static void tps43_work_handler(struct k_work *work) {
             LOG_DBG("Zooming %d, rel_x=%d", zoom_delta, rel_x);
             input_report_rel(dev, INPUT_REL_MISC, zoom_delta, true, K_MSEC(5));
             is_zoom_active = false;
-        } else if (!config->force_click || (is_touching && !drv_data->force.suppress_motion)) {
+        } else if (!three_tap.claimed &&
+                   (!config->force_click || (is_touching && !drv_data->force.suppress_motion))) {
             /* Drop squeeze/release displacement instead of replaying it later.
              * Scroll and zoom keep their own movement paths above. */
             if (rel_x != 0 ) {
@@ -1625,8 +1642,12 @@ static int tps43_init(const struct device *dev) {
             .motion_threshold = DT_INST_PROP(inst, force_click_motion_threshold),                   \
             .drag_threshold = DT_INST_PROP(inst, force_click_drag_threshold),                       \
             .settle_ms = DT_INST_PROP(inst, force_click_settle_ms),                                  \
+            .moving_press_delta = DT_INST_PROP(inst, force_click_moving_threshold),                 \
+            .moving_press_percent = DT_INST_PROP(inst, force_click_moving_threshold_percent),       \
+            .motion_settle_ms = DT_INST_PROP(inst, force_click_motion_settle_ms),                    \
         },                                                                                         \
         .two_finger_tap = DT_INST_PROP(inst, two_finger_tap),                                        \
+        .three_finger_tap = DT_INST_PROP(inst, three_finger_tap),                                    \
         .scroll = DT_INST_PROP(inst, scroll),                                                        \
         .zoom = DT_INST_PROP(inst, zoom),                                                            \
         .swipes = DT_INST_PROP(inst, swipes),                                                        \
@@ -1681,6 +1702,18 @@ static int tps43_init(const struct device *dev) {
     DEVICE_DT_INST_DEFINE(inst, tps43_init, NULL, &tps43_##inst##_drvdata, &tps43_##inst##_config,   \
                         POST_KERNEL, CONFIG_INPUT_INIT_PRIORITY, NULL);                              \
     BUILD_ASSERT(DT_INST_REG_ADDR(inst) == TPS43_I2C_ADDR, "I2C address mismatch");                     \
+    BUILD_ASSERT(!DT_INST_PROP(inst, three_finger_tap) || DT_INST_PROP(inst, force_click),             \
+                 "Three finger tap requires streaming force mode");                                \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_moving_threshold) >=                                 \
+                 DT_INST_PROP(inst, force_click_threshold) &&                                       \
+                 DT_INST_PROP(inst, force_click_moving_threshold) <= UINT16_MAX,                     \
+                 "Moving threshold must be at least resting threshold");                           \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_moving_threshold_percent) >=                         \
+                 DT_INST_PROP(inst, force_click_threshold_percent) &&                               \
+                 DT_INST_PROP(inst, force_click_moving_threshold_percent) <= 100,                    \
+                 "Invalid moving force ratio");                                                    \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_motion_settle_ms) >= 0 &&                            \
+                 DT_INST_PROP(inst, force_click_motion_settle_ms) <= 1000, "Invalid motion settling");\
     BUILD_ASSERT(DT_INST_PROP(inst, force_click_threshold) >                                         \
                  DT_INST_PROP(inst, force_click_release_threshold), "Invalid force hysteresis");     \
     BUILD_ASSERT(DT_INST_PROP(inst, force_click_threshold) <= UINT16_MAX &&                           \
