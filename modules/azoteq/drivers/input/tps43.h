@@ -83,6 +83,7 @@ extern "C" {
 /* XY configuration */
 // Read-write
 #define TPS43_REG_XY_CONFIG_0       0x0669  /* 1 byte */
+#define TPS43_REG_MAX_MULTI_TOUCHES 0x066A  /* 1 byte, IQS5xx section 5.3 */
 
 /* Gesture configuration */
 // Read-write // Low-level gesture configuration

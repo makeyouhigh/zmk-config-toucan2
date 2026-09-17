@@ -24,6 +24,11 @@ def fixture(start=100, sample=116):
 
 
 class TraceTests(unittest.TestCase):
+    def test_v12_version(self):
+        data = fixture()
+        data["lines"][0] = data["lines"][0].replace("v11", "v12")
+        self.assertEqual(parser.parse(data)["version"], "v12")
+
     def test_decode_signed_sensor_and_flags(self):
         result = parser.parse(fixture())
         frame = result["frames"][0]

@@ -10,6 +10,7 @@
 /* Keep v4's 24 * 3 squeeze travel limit independent of drag sensitivity.
  * Raising the drag threshold must not also admit moving false clicks. */
 #define TPS43_FORCE_PRESS_TRAVEL_LIMIT 72U
+#define TPS43_FORCE_REBOUND_MS 150U
 
 enum tps43_force_event {
     TPS43_FORCE_RELEASE = -1,
@@ -38,6 +39,11 @@ struct tps43_force_config {
 };
 
 struct tps43_force_state {
+    int64_t rebound_peak_ms;
+    uint16_t rebound_trough;
+    uint8_t rebound_samples;
+    bool rebound_release;
+    bool rebound_used;
     bool active;
     bool ready;
     bool blocked;
@@ -340,13 +346,44 @@ tps43_force_step(struct tps43_force_state *state,
             state->motion_until_ms = now_ms + config->motion_settle_ms;
         }
     }
-    if (state->down && strength > state->press_peak) {
-        state->press_peak = strength;
+    /* A fast second squeeze may make only a shallow valley. Recognize its
+     * recovery, without lowering the normal release threshold for all clicks.
+     * Require a full-strength peak, consecutive falling samples, and a new
+     * rise beyond that peak. A held click/drag and weak repeat-click wobble
+     * must not be split. Only one such split is allowed before a real release. */
+    if (state->down) {
+        if (strength < state->rebound_trough) { state->rebound_trough = strength; }
+        if ((uint32_t)strength + config->release_delta / 2U <= state->press_peak) {
+            if (state->rebound_samples < 2) { state->rebound_samples++; }
+        } else if (state->rebound_samples < 2) { state->rebound_samples = 0; }
+        if (strength > state->press_peak && !state->rebound_release) {
+            bool quick_rebound = !state->rebound_used &&
+                (uint32_t)state->press_peak >= (uint32_t)state->baseline +
+                    (resting_threshold * (100U + config->click_margin_percent) + 99U) / 100U &&
+                now_ms - state->pressed_ms < config->drag_hold_ms &&
+                state->rebound_samples >= 2 &&
+                (uint32_t)state->rebound_trough + config->release_delta <= state->press_peak &&
+                now_ms - state->rebound_peak_ms <= TPS43_FORCE_REBOUND_MS;
+            if (quick_rebound) {
+                /* Require a new rise above the former peak, not just a dip.
+                 * An isolated low sample cannot qualify. */
+                if ((uint32_t)strength >= (uint32_t)state->press_peak + config->release_delta) {
+                    state->rebound_release = true;
+                    state->rebound_used = true;
+                }
+            } else {
+                state->press_peak = strength;
+                state->rebound_peak_ms = now_ms;
+                state->rebound_trough = strength;
+                state->rebound_samples = 0;
+            }
+        }
     }
     /* A click releases on a sustained fall from its peak by the release band.
      * Release confirmation is separate from the longer press confirmation. */
     bool relaxed = state->down &&
-                   (uint32_t)strength + release_threshold <= state->press_peak;
+                   (state->rebound_release ||
+                    (uint32_t)strength + release_threshold <= state->press_peak);
     bool next_down = state->down ? delta > (int32_t)release_threshold && !relaxed
                                  : delta >= (int32_t)press_threshold;
 
@@ -439,6 +476,10 @@ tps43_force_step(struct tps43_force_state *state,
     state->down = next_down;
     if (next_down) {
         state->press_peak = strength;
+        state->rebound_peak_ms = now_ms;
+        state->rebound_trough = strength;
+        state->rebound_samples = 0;
+        state->rebound_release = false;
         state->pressed_ms = now_ms;
         state->drag_armed = config->drag_hold_ms == 0;
         state->repeat_until_ms = 0;
@@ -449,6 +490,15 @@ tps43_force_step(struct tps43_force_state *state,
     } else {
         /* This is a stationary click release; active drags return above.
          * Arm a second squeeze from the newly relaxed strength immediately. */
+        if (state->rebound_release) {
+            /* This is an already confirmed re-squeeze, not a relaxed resting
+             * level. Keep the original baseline for the following down, so
+             * it cannot immediately release against a newly raised baseline. */
+            state->release_trough = state->baseline;
+        } else {
+            state->rebound_used = false;
+        }
+        state->rebound_release = false;
         state->baseline = state->release_trough;
         state->baseline_q8 = (int32_t)state->baseline * 256;
         state->repeat_until_ms = now_ms + config->repeat_ms;

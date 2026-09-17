@@ -1,4 +1,4 @@
-"""Validate v11 RAM trace transfer and decode sensor/state frames."""
+"""Validate v11/v12 RAM trace transfer and decode sensor/state frames."""
 import argparse
 import json
 import struct
@@ -9,7 +9,7 @@ assert WIRE.size == 68
 FLAG_NAMES = (
     "active", "ready", "blocked", "down", "tap_consumed", "candidate",
     "prepress", "candidate_moving", "dragging", "drag_armed", "suppress_motion",
-    "previous_resting", "hold_cancelled",
+    "previous_resting", "hold_cancelled", "rebound_release", "rebound_used",
 )
 
 
@@ -49,7 +49,8 @@ def decode(payload, start_ms):
 def parse(document):
     lines = document["lines"]
     header = lines[0].split(",")
-    if len(header) != 7 or header[:3] != ["DATA", "v11", "1"]:
+    if (len(header) != 7 or header[0] != "DATA" or
+            header[1] not in ("v11", "v12") or header[2] != "1"):
         raise ValueError("Unexpected trace header/version")
     count, full, start, size = map(int, header[3:])
     if size != WIRE.size or count > 1536 or count < 0:
@@ -71,7 +72,7 @@ def parse(document):
     if any(t > 10000 for t in times):
         raise ValueError("Frame outside capture window")
     return {
-        "version": "v11", "buffer_full": bool(full), "started_ms": start,
+        "version": header[1], "buffer_full": bool(full), "started_ms": start,
         "records": count, "frames": frames,
         "force_edges": [{k: f[k] for k in
                         ("relative_ms", "event", "strength", "baseline", "button_rc",

@@ -42,7 +42,8 @@ static inline uint16_t tps43_trace_flags(const struct tps43_force_state *s) {
            (s->down << 3) | (s->tap_consumed << 4) | (s->candidate << 5) |
            (s->prepress << 6) | (s->candidate_moving << 7) | (s->dragging << 8) |
            (s->drag_armed << 9) | (s->suppress_motion << 10) |
-           (s->previous_resting << 11) | (s->hold_cancelled << 12);
+           (s->previous_resting << 11) | (s->hold_cancelled << 12) |
+           (s->rebound_release << 13) | (s->rebound_used << 14);
 }
 static inline uint16_t tps43_trace_duration(int64_t value) {
     return value < 0 ? 0 : value > 65535 ? 65535 : (uint16_t)value;
@@ -61,4 +62,3 @@ static inline void tps43_trace_state(struct tps43_trace_record *r,
     r->repeat_left = tps43_trace_duration(s->repeat_until_ms - r->sample_ms);
 }
 #endif
-

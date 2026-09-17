@@ -15,14 +15,24 @@ function Request-Line([string]$Command) {
     $serial.Write($Command)
     return $serial.ReadLine().Trim()
 }
+function Request-WhenIdle([string]$Command) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(60)
+    do {
+        $reply = Request-Line $Command
+        if ($reply -eq 'BUSY') { Start-Sleep -Milliseconds 200 }
+        if ([DateTime]::UtcNow -gt $deadline) { throw 'Touching timeout; frozen trace remains on device' }
+    } while ($reply -eq 'BUSY')
+    return $reply
+}
 try {
     $serial.Open()
     Start-Sleep -Milliseconds 300
     $serial.DiscardInBuffer()
     $status = Request-Line 'S'
-    if ($status -notmatch '^STATUS,v11,1,') {
+    if ($status -notmatch '^STATUS,(v11|v12),1,') {
         throw "Unexpected firmware: $status"
     }
+    $version = $Matches[1]
     @{state='ready';port=$Port;status=$status} | ConvertTo-Json -Compress
     if ($StartFile) {
         $deadline = [DateTime]::UtcNow.AddSeconds(180)
@@ -34,7 +44,14 @@ try {
     $hostBefore = [System.Diagnostics.Stopwatch]::GetTimestamp()
     $arm = Request-Line 'A'
     $hostAfter = [System.Diagnostics.Stopwatch]::GetTimestamp()
-    if ($arm -notmatch '^ARM,v11,1,') { throw "Cannot arm; lift fingers first: $arm" }
+    if ($arm -notmatch "^ARM,$version,1,") { throw "Cannot arm; lift fingers first: $arm" }
+    # Persist clock alignment before download: interruption must not lose the
+    # timestamps needed to align this frozen capture with PC mouse arrivals.
+    @{
+        version=$version;port=$Port;status=$status;arm=$arm;
+        host_arm_before_ticks=$hostBefore;host_arm_after_ticks=$hostAfter;
+        host_clock_hz=[System.Diagnostics.Stopwatch]::Frequency
+    } | ConvertTo-Json | Set-Content -LiteralPath ($Output + '.arm.json') -Encoding utf8
     @{state='recording';arm=$arm} | ConvertTo-Json -Compress
     Start-Sleep -Milliseconds 10200
     @{state='lift_fingers_for_download'} | ConvertTo-Json -Compress
@@ -44,20 +61,20 @@ try {
         if ($header -eq 'BUSY') { Start-Sleep -Milliseconds 250 }
         if ([DateTime]::UtcNow -gt $deadline) { throw 'Still touching; download timeout' }
     } while ($header -eq 'BUSY')
-    if ($header -notmatch '^DATA,v11,1,(\d+),') { throw "Unexpected header: $header" }
+    if ($header -notmatch "^DATA,$version,1,(\d+),") { throw "Unexpected header: $header" }
     $count = [int]$Matches[1]
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add($header)
     for ($i = 0; $i -lt $count; $i++) {
-        $line = Request-Line 'N'
+        $line = Request-WhenIdle 'N'
         if (-not $line.StartsWith("R,$i,")) { throw "Transfer stopped at $i : $line" }
         $lines.Add($line)
     }
-    $end = Request-Line 'N'
+    $end = Request-WhenIdle 'N'
     if ($end -ne "END,$count") { throw "Missing end marker: $end" }
     $lines.Add($end)
     $result = [ordered]@{
-        version='v11';port=$Port;status=$status;arm=$arm;
+        version=$version;port=$Port;status=$status;arm=$arm;
         host_arm_before_ticks=$hostBefore;host_arm_after_ticks=$hostAfter;
         host_clock_hz=[System.Diagnostics.Stopwatch]::Frequency;
         lines=$lines.ToArray()

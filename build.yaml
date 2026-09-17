@@ -23,11 +23,11 @@ include:
     shield: toucan_left rgbled_adapter nice_view_gem
     snippet: studio-rpc-usb-uart
     cmake-args: -DCONFIG_ZMK_STUDIO=y
-    artifact-name: toucan_left-v11
+    artifact-name: toucan_left-v12
   - board: seeeduino_xiao_ble
     shield: toucan_right rgbled_adapter
     snippet: toucan-force-trace
-    artifact-name: toucan_right-v11
+    artifact-name: toucan_right-v12
   - board: seeeduino_xiao_ble
     shield: settings_reset
-    artifact-name: settings_reset-v11
+    artifact-name: settings_reset-v12

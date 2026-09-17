@@ -842,7 +842,68 @@ static void test_v10_repeat_rise_precedes_coordinate_cancel(void) {
     assert(!f.s.repeat_until_ms);
 }
 
+static void test_v12_shallow_fast_rebound(void) {
+    struct fixture f=fresh(); rest(&f,5000); press(&f,5600);
+    const uint16_t first[]={5800,5790,5783,5784,5800,5816,5820,5840,5840,5840};
+    int up=0, down=0;
+    for (unsigned i=0;i<sizeof(first)/sizeof(*first);i++) {
+        int event=sample(&f,first[i]);
+        up+=event==TPS43_FORCE_RELEASE; down+=event==TPS43_FORCE_PRESS;
+        assert(f.s.suppress_motion && !f.s.dragging);
+    }
+    assert(up==1 && down==1 && f.s.down);
+    /* A continuing ripple after that second down cannot generate a third. */
+    const uint16_t ripple[]={5860,5850,5840,5842,5860,5880,5900};
+    for (unsigned i=0;i<sizeof(ripple)/sizeof(*ripple);i++)
+        assert(sample(&f,ripple[i])==0 && f.s.down);
+    release(&f,5600);
+    assert(send_frame(&f,0,0,true)==0);
+
+    /* A single bad sensor sample is not a second squeeze. */
+    f=fresh(); rest(&f,5000); press(&f,5600);
+    const uint16_t glitch[]={5800,5780,5816,5820,5840,5840};
+    for (unsigned i=0;i<sizeof(glitch)/sizeof(*glitch);i++)
+        assert(sample(&f,glitch[i])==0 && f.s.down);
+
+    /* Slow reshaping of one press must not be split by a later rise. */
+    f=fresh(); rest(&f,5000); press(&f,5600); assert(sample(&f,5800)==0);
+    for (int i=0;i<20;i++) assert(sample(&f,5780)==0 && f.s.down);
+    for (int i=0;i<5;i++) assert(sample(&f,5840)==0 && f.s.down);
+
+    /* The easier repeat threshold cannot make a weak ripple into more clicks. */
+    f=fresh(); rest(&f,5000); press(&f,5600); assert(sample(&f,6100)==0);
+    release(&f,5900); press(&f,6100);
+    const uint16_t weak[]={6200,6190,6180,6185,6200,6220,6240,6240};
+    for (unsigned i=0;i<sizeof(weak)/sizeof(*weak);i++)
+        assert(sample(&f,weak[i])==0 && f.s.down);
+
+    /* A real held drag still latches and ignores pressure until lift. */
+    f=fresh(); rest(&f,5000); press(&f,5600); hold_for_drag(&f,5800);
+    f.x+=49; assert(sample(&f,5800)==0 && f.s.dragging);
+    for (unsigned i=0;i<sizeof(first)/sizeof(*first);i++)
+        assert(sample(&f,first[i])==0 && f.s.down && !f.s.suppress_motion);
+    assert(send_frame(&f,0,0,true)==TPS43_FORCE_RELEASE);
+}
+
+static void test_v12_three_tap_first_slot_lifts(void) {
+    struct tps43_three_tap_state s={0};
+    assert(three_frame(&s,0,3,1000).claimed);
+    assert(!three_frame(&s,32,3,1002).click);
+    /* The first tracked finger lifts, while two others remain. */
+    assert(tps43_three_tap_step(&s,48,2,true,false,UINT16_MAX,UINT16_MAX,200,16).claimed);
+    assert(tps43_three_tap_step(&s,80,2,true,false,UINT16_MAX,UINT16_MAX,200,16).claimed);
+    assert(tps43_three_tap_step(&s,96,1,true,false,UINT16_MAX,UINT16_MAX,200,16).claimed);
+    assert(three_frame(&s,120,0,0).click);
+    assert(!three_frame(&s,128,0,0).click);
+    s=(struct tps43_three_tap_state){0};
+    assert(three_frame(&s,0,3,1000).claimed);
+    tps43_three_tap_step(&s,40,2,false,false,UINT16_MAX,UINT16_MAX,200,16);
+    assert(!three_frame(&s,100,0,0).click); /* Palm/invalid contact is still rejected. */
+}
+
 int main(void) {
+    test_v12_shallow_fast_rebound();
+    test_v12_three_tap_first_slot_lifts();
     test_v10_quick_release_and_trough();
     test_v10_slow_precision_never_rearms_hold();
     test_v10_hold_requires_deliberate_distance();

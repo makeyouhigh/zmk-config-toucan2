@@ -579,14 +579,16 @@ static void tps43_work_handler(struct k_work *work) {
         uint8_t area = touch_data[TPS43_REG_TOUCH_AREA - TPS43_REG_GESTURE_EVENTS_0];
         uint16_t x = sys_get_be16(&touch_data[TPS43_REG_ABS_X - TPS43_REG_GESTURE_EVENTS_0]);
         uint16_t y = sys_get_be16(&touch_data[TPS43_REG_ABS_Y - TPS43_REG_GESTURE_EVENTS_0]);
-        bool valid = !(touch_data[3] & (TPS43_PALM_DETECT | TPS43_TOO_MANY_FINGERS)) &&
-                     (num_fingers == 0 || area != 0);
-        is_touching = is_touching && valid;
+        bool contact_valid = !(touch_data[3] & (TPS43_PALM_DETECT | TPS43_TOO_MANY_FINGERS));
+        bool position_valid = area != 0 && x != UINT16_MAX && y != UINT16_MAX;
+        bool valid = contact_valid && (num_fingers == 0 || position_valid);
+        is_touching = is_touching && contact_valid;
         if (config->three_finger_tap) {
             bool consumed = drv_data->force.down ||
                 (drv_data->force.tap_consumed && !drv_data->force.blocked);
             three_tap = tps43_three_tap_step(&drv_data->three_tap, sample_ms,
-                num_fingers, valid, consumed, x, y,
+                num_fingers, contact_valid, consumed,
+                position_valid ? x : UINT16_MAX, position_valid ? y : UINT16_MAX,
                 config->tap_time >= 0 ? config->tap_time : 200,
                 config->tap_distance >= 0 ? config->tap_distance : 16);
         }
@@ -819,6 +821,18 @@ static int tps43_configure_device(const struct device *dev) {
     LOG_INF("Events configured: 0x%02X", events_to_track);
     drv_data->event_config = events_to_track;
     drv_data->force_streaming = false;
+
+    if (config->three_finger_tap) {
+        /* Module defaults may permit only two tracked fingers. Raise that
+         * limit at setup only; retain an existing valid higher limit. */
+        uint8_t max_touches;
+        ret = tps43_i2c_read_reg8(dev, TPS43_REG_MAX_MULTI_TOUCHES, &max_touches);
+        if (ret < 0) { return ret; }
+        if (max_touches < 3 || max_touches > 5) {
+            ret = tps43_i2c_write_reg8(dev, TPS43_REG_MAX_MULTI_TOUCHES, 3);
+            if (ret < 0) { return ret; }
+        }
+    }
 
     // axis configuration
     uint8_t xy_config = 0;
