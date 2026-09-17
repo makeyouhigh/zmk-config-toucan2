@@ -33,6 +33,7 @@ struct tps43_force_config {
     uint16_t motion_settle_ms;
     uint16_t drag_hold_ms;
     uint16_t repeat_ms;
+    uint16_t repeat_motion_threshold;
 };
 
 struct tps43_force_state {
@@ -77,6 +78,8 @@ struct tps43_force_state {
     uint16_t previous_y;
     uint16_t motion_x;
     uint16_t motion_y;
+    uint16_t repeat_x;
+    uint16_t repeat_y;
 };
 
 static inline enum tps43_force_event
@@ -235,10 +238,25 @@ tps43_force_step(struct tps43_force_state *state,
                                                        config->release_percent);
     state->previous_resting = delta < (int32_t)(resting_threshold / 3U);
     bool travelling = was_moving || prior_travel || (moving && state->previous_resting);
-    if (!state->down && travelling) {
-        state->repeat_until_ms = 0;
-    }
+    /* A second squeeze naturally shifts the contact centroid. Keep its local
+     * repeat threshold and click position within a bounded spatial zone. Do
+     * not use two tiny same-direction samples to cancel a double click. */
     bool repeating = !state->down && now_ms < state->repeat_until_ms;
+    if (repeating && tps43_force_moved(x, y, state->repeat_x, state->repeat_y,
+                                      config->repeat_motion_threshold)) {
+        state->repeat_until_ms = 0;
+        repeating = false;
+        travelling = true;
+        state->candidate = false;
+        state->motion_until_ms = now_ms + config->motion_settle_ms;
+        /* Crossing the repeat zone is intentional travel. Release the cursor
+         * immediately, including the short post-release quiet interval. */
+        state->quiet_until_ms = 0;
+        state->suppress_motion = false;
+    } else if (repeating) {
+        travelling = false;
+        state->suppress_motion = true;
+    }
     uint32_t moving_threshold = tps43_force_threshold(state->baseline,
         config->moving_press_delta, config->moving_press_percent);
     if (moving_threshold < resting_threshold) { moving_threshold = resting_threshold; }
@@ -346,6 +364,8 @@ tps43_force_step(struct tps43_force_state *state,
         state->baseline_q8 = (int32_t)strength * 256;
         state->repeat_until_ms = now_ms + config->repeat_ms;
         state->repeat_threshold = (uint16_t)release_threshold;
+        state->repeat_x = x;
+        state->repeat_y = y;
         state->press_peak = 0;
         state->previous_dx = state->previous_dy = 0;
         state->previous_resting = false;
