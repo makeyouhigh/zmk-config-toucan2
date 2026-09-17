@@ -19,4 +19,6 @@ Studio에서 직접 명령과 조절량을 정하려면 기존 '포스터치 기
 
 양쪽 펌웨어가 필요합니다. 이전 Studio 저장 키맵이 있으면 여섯 자리에 새 behavior를 지정해야 할 수 있습니다. v14에서 저장한 센서 기준값은 유지합니다. 센서 판정·전송·LCD에는 변경이 없습니다.
 
+검증: 실제 Keymap Editor의 Custom Behaviors에 여섯 개가 따로 표시되고 각 사용 횟수가 1인 것을 확인했습니다. 빌드된 양쪽 설정에도 여섯 인스턴스와 명령/조절량/키 배치가 일치합니다. 펌웨어 빌드·자동 검사·파일 검증은 완료했으며, 실기기 키 입력은 적용 후 확인해야 합니다.
+
 원리 확인에 사용한 편집기 문서: https://github.com/nickcoutsos/keymap-editor/wiki/Features#behavior-editing

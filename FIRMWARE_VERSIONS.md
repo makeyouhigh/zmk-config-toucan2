@@ -8,7 +8,14 @@
 
 □ 여섯 명령은 기존 오른쪽 설정 함수를 한 번 호출합니다. 센서 판정·기준값·클릭 타이밍·BLE 전송·LCD·설정 저장 방식은 v14와 같습니다. 실제 키 동작과 감도 개선 여부는 기기 확인 전입니다.
 
-□ 빌드 및 편집기 검증 중입니다. 소스·빌드·파일 해시는 완료 후 기록합니다.
+□ 실제 Keymap Editor의 Custom Behaviors 목록에서 여섯 항목과 각 1회 사용을 확인했습니다. 빌드된 양쪽 devicetree에서 각 명령 0~5, 조절량 100, binding-cells 0 및 SYS 여섯 키를 검증했습니다. 동작·전송 큐·기록 해석기·ASan/UBSan 검사와 양쪽 빌드가 통과했습니다. UF2의 기종·블록·주소·일곱 behavior 이름(기존 force_cfg 포함)과 v15 진단 표시, ZIP 해시도 확인했습니다.
+
+□ 실제 소스: 527e003e12196b961b27fbaf723449aca95de2f2. [v15 빌드 35194086220](https://github.com/makeyouhigh/zmk-config-toucan2/actions/runs/35194086220). ZIP SHA256: c49e79e6ef5a1afdeae0de2310639275affda7daf9c83dc07f032b57a4d3f2fd.
+
+| 파일 | SHA256 |
+| --- | --- |
+| toucan_left-v15.uf2 | a7f0130b352b9063bbe94a5df7f4630b1d68ce2b2a09ec5c1728058ddba49d8d |
+| toucan_right-v15.uf2 | 6319e6176b705abdef91908f4c7da0fff82e0955fda62de697230689c3ffd0e3 |
 
 # 이전 버전 v14 — 고정 기준 포스터치 재작성 (2026-09-17)
 
