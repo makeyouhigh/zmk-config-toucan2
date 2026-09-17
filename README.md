@@ -1,4 +1,4 @@
-현재 펌웨어: [v12 — 빠른 포스터치 재클릭·세 손가락 탭 보완](FIRMWARE_VERSIONS.md). 오른쪽 적용 대상이며, 실기기 성공률은 적용 후 확인이 필요합니다.
+현재 펌웨어: [v12 — 빠른 포스터치 재클릭·세 손가락 탭 보완](FIRMWARE_VERSIONS.md) · [검증된 빌드](https://github.com/makeyouhigh/zmk-config-toucan2/actions/runs/35185685180). 오른쪽만 적용합니다. 왼쪽은 v8~v11과 같은 바이너리이며, 실기기 성공률은 적용 후 확인이 필요합니다.
 
 # ZMK config for beekeeb Toucan2 Keyboard
 
