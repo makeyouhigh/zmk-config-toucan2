@@ -1,3 +1,5 @@
+현재 펌웨어: [v8 — 코드 정리 + 250ms 홀드 드래그 복구](FIRMWARE_VERSIONS.md) · [검증된 빌드](https://github.com/makeyouhigh/zmk-config-toucan2/actions/runs/35175784709)
+
 # ZMK config for beekeeb Toucan2 Keyboard
 
 [The beekeeb Toucan2 Keyboard](https://beekeeb.com/introducing-toucan2/) is a wireless split 42-key column‑stagger keyboard that a display and a trackpad, with an aggressive stagger on the pinky columns.
