@@ -1,0 +1,6 @@
+&zephyr_udc0 {
+    toucan_trace_uart: toucan_trace_uart {
+        compatible = "zephyr,cdc-acm-uart";
+    };
+};
+

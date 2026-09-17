@@ -13,8 +13,10 @@
 #include <stdlib.h>
 #include <math.h>
 #include <errno.h>
+#include <string.h>
 
 #include "tps43.h"
+#include "tps43_trace.h"
 
 LOG_MODULE_REGISTER(tps43, CONFIG_INPUT_LOG_LEVEL);
 
@@ -22,11 +24,13 @@ static int check_reset_and_reconfigure(const struct device *dev);
 static void tps43_force_communication(const struct device *dev);
 static void tps43_power_work(struct k_work *work);
 
-static void tps43_force_report(const struct device *dev, enum tps43_force_event event) {
+static int tps43_force_report(const struct device *dev, enum tps43_force_event event) {
     if (event != TPS43_FORCE_NONE) {
-        input_report_key(dev, INPUT_BTN_0, event == TPS43_FORCE_PRESS, true, K_MSEC(5));
+        int rc = input_report_key(dev, INPUT_BTN_0, event == TPS43_FORCE_PRESS, true, K_MSEC(5));
         LOG_DBG("Force click %s", event == TPS43_FORCE_PRESS ? "down" : "up");
+        return rc;
     }
+    return INT16_MAX;
 }
 
 /* The split input transport forwards this absolute value to the LCD side.
@@ -65,7 +69,19 @@ static void tps43_force_watchdog(struct k_work *work) {
                                               struct tps43_drv_data, force_watchdog);
     k_sem_take(&data->lock, K_FOREVER);
     if (data->touching || data->force.down) {
+#ifdef CONFIG_TOUCAN_FORCE_TRACE
+        struct tps43_trace_record trace = {
+            .sample_ms = k_uptime_get_32(), .kind = 2,
+            .before_flags = tps43_trace_flags(&data->force),
+            .baseline_before = data->force.baseline,
+            .button_rc = INT16_MAX, .x_rc = INT16_MAX, .y_rc = INT16_MAX,
+        };
+#endif
         tps43_force_cancel_and_report(data->dev);
+#ifdef CONFIG_TOUCAN_FORCE_TRACE
+        tps43_trace_state(&trace, &data->force);
+        tps43_trace_record(&trace, false);
+#endif
         LOG_WRN("Touch and force released: no fresh sensor data");
         if (!data->suspended) {
             tps43_force_communication(data->dev);
@@ -456,6 +472,13 @@ static void tps43_work_handler(struct k_work *work) {
     bool software_tap = false;
     struct tps43_three_tap_result three_tap = {0};
     int ret;
+#ifdef CONFIG_TOUCAN_FORCE_TRACE
+    uint32_t trace_cycles = k_cycle_get_32();
+    struct tps43_trace_record trace = {
+        .sample_ms = k_uptime_get_32(), .kind = 1,
+        .button_rc = INT16_MAX, .x_rc = INT16_MAX, .y_rc = INT16_MAX,
+    };
+#endif
 
     // If device is in suspend, ignore interrupt (RDY should be disabled)
     if (drv_data->suspended) {
@@ -472,6 +495,10 @@ static void tps43_work_handler(struct k_work *work) {
         k_sem_give(&drv_data->lock);
         return;
     }
+#ifdef CONFIG_TOUCAN_FORCE_TRACE
+    trace.before_flags = tps43_trace_flags(&drv_data->force);
+    trace.baseline_before = drv_data->force.baseline;
+#endif
 
     /*
      * Read the contiguous block from GESTURE_EVENTS_0 through REL_Y, extended
@@ -502,6 +529,10 @@ static void tps43_work_handler(struct k_work *work) {
         }
         goto done;
     }
+#ifdef CONFIG_TOUCAN_FORCE_TRACE
+    memcpy(trace.raw, touch_data, read_len);
+    trace.sample_ms = k_uptime_get_32();
+#endif
 
     if (config->force_click && (touch_data[2] & TPS43_SHOW_RESET)) {
         tps43_force_cancel_and_report(dev);
@@ -538,6 +569,10 @@ static void tps43_work_handler(struct k_work *work) {
      * cycle start before input callbacks or Bluetooth queues can block us. */
     tps43_end_communication_window(dev);
     communication_closed = true;
+#ifdef CONFIG_TOUCAN_FORCE_TRACE
+    trace.kind = 0;
+    trace.io_us = k_cyc_to_us_floor32(k_cycle_get_32() - trace_cycles);
+#endif
     if (config->force_click) {
         uint16_t strength = sys_get_be16(&touch_data[TPS43_REG_TOUCH_STRENGTH -
                                                     TPS43_REG_GESTURE_EVENTS_0]);
@@ -555,8 +590,17 @@ static void tps43_work_handler(struct k_work *work) {
                 config->tap_time >= 0 ? config->tap_time : 200,
                 config->tap_distance >= 0 ? config->tap_distance : 16);
         }
-        tps43_force_report(dev, tps43_force_step(&drv_data->force, &config->force,
-                                               sample_ms, num_fingers, strength, valid, x, y));
+        enum tps43_force_event force_event = tps43_force_step(&drv_data->force, &config->force,
+                                               sample_ms, num_fingers, strength, valid, x, y);
+        int force_rc = tps43_force_report(dev, force_event);
+#ifdef CONFIG_TOUCAN_FORCE_TRACE
+        trace.sample_ms = (uint32_t)sample_ms;
+        trace.event = force_event;
+        trace.button_rc = force_rc;
+        trace.extra = valid ? 1 : 0;
+#else
+        ARG_UNUSED(force_rc);
+#endif
         if (config->single_tap) {
             software_tap = tps43_tap_step(&drv_data->tap, sample_ms, num_fingers,
                                            valid, drv_data->force.tap_consumed, x, y,
@@ -682,10 +726,22 @@ static void tps43_work_handler(struct k_work *work) {
             LOG_DBG("Sending movement: dx=%d, dy=%d", rel_x, rel_y);
 
             if (rel_x != 0) {
-                input_report_rel(dev, INPUT_REL_X, rel_x, rel_y == 0, K_MSEC(5));
+                int rc = input_report_rel(dev, INPUT_REL_X, rel_x, rel_y == 0, K_MSEC(5));
+#ifdef CONFIG_TOUCAN_FORCE_TRACE
+                trace.x_rc = rc;
+                trace.output_x = rel_x;
+#else
+                ARG_UNUSED(rc);
+#endif
             }
             if (rel_y != 0) {
-                input_report_rel(dev, INPUT_REL_Y, rel_y, true, K_MSEC(5));
+                int rc = input_report_rel(dev, INPUT_REL_Y, rel_y, true, K_MSEC(5));
+#ifdef CONFIG_TOUCAN_FORCE_TRACE
+                trace.y_rc = rc;
+                trace.output_y = rel_y;
+#else
+                ARG_UNUSED(rc);
+#endif
             }
         }
     }
@@ -696,6 +752,13 @@ done:
     if (!communication_closed) {
         tps43_end_communication_window(dev);
     }
+#ifdef CONFIG_TOUCAN_FORCE_TRACE
+    trace.work_us = k_cyc_to_us_floor32(k_cycle_get_32() - trace_cycles);
+    trace.frame_rc = ret;
+    trace.extra |= (software_tap << 1) | (three_tap.click << 2) | (three_tap.claimed << 3);
+    tps43_trace_state(&trace, &drv_data->force);
+    tps43_trace_record(&trace, drv_data->touching);
+#endif
 
     // Release semaphore after completing all I2C operations
     k_sem_give(&drv_data->lock);

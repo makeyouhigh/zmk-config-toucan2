@@ -2,3 +2,6 @@ zephyr_library_named(toucan_azoteq)
 
 zephyr_library_sources_ifdef(CONFIG_INPUT_TPS43 tps43.c)
 target_sources_ifdef(CONFIG_INPUT_TPS43 app PRIVATE tps43_idle_sleeper.c)
+
+zephyr_library_sources_ifdef(CONFIG_TOUCAN_FORCE_TRACE tps43_trace.c)
+

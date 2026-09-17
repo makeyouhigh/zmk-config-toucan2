@@ -4,3 +4,5 @@ build:
   settings:
     board_root: .
     dts_root: modules/azoteq
+    snippet_root: .
+
