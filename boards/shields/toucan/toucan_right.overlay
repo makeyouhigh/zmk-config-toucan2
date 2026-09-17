@@ -69,25 +69,18 @@
         filter-settings=<0x0B>;
         // 정지·저속 구간의 IIR 계수 지정 - 16(강보정) - 32(중간) - 64(약보정)
         filter-dynamic-bottom = <32>;
-        // 접촉 후 강도가 증가하면 클릭. 임계값은 실기기에서 조절할 초기값입니다.
+        // v14: user-calibrated fixed raw values; never relearn on touchdown.
         force-click;
-        force-click-threshold = <30>;
-        force-click-release-threshold = <16>;
-        force-click-threshold-percent = <8>;
-        force-click-moving-threshold = <90>;
-        force-click-moving-threshold-percent = <24>;
-        // v8 클릭 세기에서 이동 억제, 그 증가량보다 25% 더 누르면 클릭.
-        force-click-margin-percent = <25>;
+        force-lock-level = <4250>;
+        force-press-level = <4500>;
+        force-release-level = <4000>;
+        force-moving-lock-level = <4750>;
+        force-moving-press-level = <5000>;
+        force-click-debounce-ms = <8>;
         force-click-motion-settle-ms = <32>;
-        force-click-release-threshold-percent = <3>;
-        force-click-baseline-ms = <40>;
-        force-click-debounce-ms = <16>;
-        force-click-release-debounce-ms = <8>;
-        force-click-settle-ms = <64>;
         force-click-motion-threshold = <6>;
         force-click-drag-threshold = <48>;
         force-click-drag-hold-ms = <300>;
-        force-click-repeat-ms = <400>;
         report-rate-active = <8>;
         report-rate-idle-touch = <8>;
         timeout-idle-touch = <255>;

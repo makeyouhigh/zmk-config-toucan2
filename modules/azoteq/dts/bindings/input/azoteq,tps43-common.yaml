@@ -1,135 +1,60 @@
 properties:
-  force-click-margin-percent:
-    type: int
-    default: 25
-    description: |
-      Additional percentage of the motion-lock strength increase required to
-      click (1 to 100). The existing stationary/moving thresholds lock motion;
-      25 requires 125 percent of that increase to click. Freeze the baseline
-      while pressure builds; relaxing below half the lock threshold unlocks.
-      A large deliberate move cancels the preliminary lock. Active drags bypass
-      the lock. These are uncalibrated sensor deltas, not physical force units.
-
   force-click:
     type: boolean
     description: |
-      Use an increase in touch strength over an adaptive resting baseline for
-      left-button down/up. Timed press-and-hold can be enabled separately. A normal
-      single tap can be enabled separately, but is suppressed after a force click in
-      the same contact. Two-finger tap and scroll remain available. Strength is not a
-      calibrated force measurement. Streams sensor frames only during contact.
+      Fixed absolute Touch Strength thresholds. No touchdown calibration or
+      automatic threshold learning. Physical force units are not implied.
+      Normal taps, three-finger taps and initial hold-to-drag remain separate.
 
-  force-click-threshold:
+  force-lock-level:
     type: int
-    default: 30
-    description: |
-      Minimum touch-strength increase over baseline needed to lock squeeze motion.
-      The larger of this value and force-click-threshold-percent is used.
-      Clicking requires the additional force-click-margin-percent increase.
-      Must exceed force-click-release-threshold. Uncalibrated starting value.
+    default: 0
+    description: Fixed stationary raw strength at which squeeze movement is suppressed.
 
-  force-click-release-threshold:
+  force-press-level:
     type: int
-    default: 16
-    description: |
-      Release when the increase falls to the larger of this value and the
-      percentage threshold or below. A drop from the click peak by this release
-      threshold also releases a stationary click. A started drag stays
-      pressed until lift or invalid/lost contact.
+    default: 0
+    description: Fixed stationary raw strength required for a left-button press.
 
-  force-click-moving-threshold:
+  force-release-level:
     type: int
-    default: 90
-    description: Minimum strength rise to lock motion during a moving squeeze, before the additional click margin.
+    default: 0
+    description: Release immediately at or below this fixed raw strength. Must be below lock and press. Active drag releases on lift.
 
-  force-click-moving-threshold-percent:
+  force-moving-lock-level:
     type: int
-    default: 24
-    description: Moving motion-lock threshold as a percentage of baseline; the absolute minimum and additional click margin also apply.
+    default: 0
+    description: Fixed movement suppression level when travel precedes the squeeze.
+
+  force-moving-press-level:
+    type: int
+    default: 0
+    description: Fixed click level when travel precedes the squeeze. At least the stationary click level.
+
+  force-click-debounce-ms:
+    type: int
+    default: 8
+    description: Continuous time at or above the fixed press level. Release has no extra timer.
 
   force-click-motion-settle-ms:
     type: int
     default: 32
-    description: Time without deliberate travel before returning to the resting click threshold. Does not delay pointer movement.
-
-  force-click-threshold-percent:
-    type: int
-    default: 8
-    description: |
-      Motion-lock threshold as a percentage of the resting strength (0 to 100).
-      The absolute minimum still applies. Zero disables percentage scaling.
-
-  force-click-release-threshold-percent:
-    type: int
-    default: 3
-    description: |
-      Release threshold as a percentage of the resting strength (0 to 100).
-      Must not exceed the press percentage. The absolute minimum still applies.
-
-  force-click-baseline-ms:
-    type: int
-    default: 40
-    description: |
-      Stable contact averaging interval in milliseconds (0 to 1000).
-      Unstable landing restarts calibration. At least four samples
-      are required; no click is emitted during calibration.
-
-  force-click-debounce-ms:
-    type: int
-    default: 16
-    description: |
-      Required continuous duration above the click threshold
-      in milliseconds (0 to 1000). Invalid input releases immediately.
-
-  force-click-release-debounce-ms:
-    type: int
-    default: 8
-    description: |
-      Continuous duration below the release threshold before releasing a
-      stationary force click (1 to 1000 ms). At least two reports are required.
-      Keep the lowest strength seen during confirmation for the next squeeze.
-      Active drags remain held until lift or invalid/lost contact.
-
-  force-click-settle-ms:
-    type: int
-    default: 64
-    description: Minimum age of a new contact before arming a click, in milliseconds (0 to 1000).
+    description: Time after recent travel to return to stationary thresholds. Does not delay pointer reports.
 
   force-click-motion-threshold:
     type: int
     default: 6
-    description: |
-      Recent movement tolerance in sensor units. Deliberate travel selects the
-      higher moving press threshold. Bounded jitter does not restart settling.
-      Strength changes after stopping are
-      kept for the next squeeze instead of absorbed into the resting baseline.
-      A squeeze candidate allows centroid displacement.
+    description: Sensor-coordinate movement band used to distinguish prior travel.
 
   force-click-drag-threshold:
     type: int
-    default: 24
-    description: |
-      Displacement along either absolute sensor axis after drag-hold-ms has
-      elapsed required to start dragging. Earlier deformation is discarded.
-      Uses sensor coordinate units, not screen pixels. Must be at least the
-      motion threshold and no more than 65535.
+    default: 48
+    description: New movement beyond this sensor distance starts an armed drag.
 
   force-click-drag-hold-ms:
     type: int
     default: 300
-    description: |
-      Hold a force press for this duration before new movement can latch a drag.
-      Button-down is immediate after debounce; ordinary motion is not delayed.
-      Must be between 0 and 1000 milliseconds.
-
-  force-click-repeat-ms:
-    type: int
-    default: 400
-    description: |
-      After a stationary click releases, allow a renewed rise by the release
-      band from its trough to make another click. Deliberate travel or lift
-      cancels this window. Does not defer any button event or move the cursor.
-      Must be between 0 and 1000 milliseconds. Zero disables repeat assistance.
+    description: Time a force click is held before new travel can latch drag until lift.
 
   rdy-gpios:
     type: phandle-array

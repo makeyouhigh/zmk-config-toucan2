@@ -1,4 +1,4 @@
-현재 펌웨어: [v13 — 세 손가락 탭·홀드 취소 조건 수정](FIRMWARE_VERSIONS.md). 오른쪽 적용 대상입니다. 더블클릭 누락은 해결 여부를 확인 중입니다.
+현재 펌웨어: [v14 — 고정 기준 포스터치 재작성](FIRMWARE_VERSIONS.md). 오른쪽 적용 대상입니다. [고정값과 동작 설명](docs/fixed-force-v14.md). 실기기 검증 전입니다.
 
 # ZMK config for beekeeb Toucan2 Keyboard
 

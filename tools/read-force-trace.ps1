@@ -29,10 +29,12 @@ try {
     Start-Sleep -Milliseconds 300
     $serial.DiscardInBuffer()
     $status = Request-Line 'S'
-    if ($status -notmatch '^STATUS,(v11|v12|v13),1,') {
+    if ($status -notmatch '^STATUS,(v11|v12|v13|v14),(1|2),') {
         throw "Unexpected firmware: $status"
     }
     $version = $Matches[1]
+    $protocol = $Matches[2]
+    if (($version -eq 'v14') -ne ($protocol -eq '2')) { throw "Unexpected protocol: $status" }
     @{state='ready';port=$Port;status=$status} | ConvertTo-Json -Compress
     if ($StartFile) {
         $deadline = [DateTime]::UtcNow.AddSeconds(180)
@@ -44,7 +46,7 @@ try {
     $hostBefore = [System.Diagnostics.Stopwatch]::GetTimestamp()
     $arm = Request-Line 'A'
     $hostAfter = [System.Diagnostics.Stopwatch]::GetTimestamp()
-    if ($arm -notmatch "^ARM,$version,1,") { throw "Cannot arm; lift fingers first: $arm" }
+    if ($arm -notmatch "^ARM,$version,$protocol,") { throw "Cannot arm; lift fingers first: $arm" }
     # Persist clock alignment before download: interruption must not lose the
     # timestamps needed to align this frozen capture with PC mouse arrivals.
     @{
@@ -61,7 +63,7 @@ try {
         if ($header -eq 'BUSY') { Start-Sleep -Milliseconds 250 }
         if ([DateTime]::UtcNow -gt $deadline) { throw 'Still touching; download timeout' }
     } while ($header -eq 'BUSY')
-    if ($header -notmatch "^DATA,$version,1,(\d+),") { throw "Unexpected header: $header" }
+    if ($header -notmatch "^DATA,$version,$protocol,(\d+),") { throw "Unexpected header: $header" }
     $count = [int]$Matches[1]
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add($header)

@@ -73,13 +73,12 @@ static void tps43_force_watchdog(struct k_work *work) {
         struct tps43_trace_record trace = {
             .sample_ms = k_uptime_get_32(), .kind = 2,
             .before_flags = tps43_trace_flags(&data->force),
-            .baseline_before = data->force.baseline,
             .button_rc = INT16_MAX, .x_rc = INT16_MAX, .y_rc = INT16_MAX,
         };
 #endif
         tps43_force_cancel_and_report(data->dev);
 #ifdef CONFIG_TOUCAN_FORCE_TRACE
-        tps43_trace_state(&trace, &data->force);
+        tps43_trace_state(&trace, &data->force, &((const struct tps43_config *)data->dev->config)->force);
         tps43_trace_record(&trace, false);
 #endif
         LOG_WRN("Touch and force released: no fresh sensor data");
@@ -497,7 +496,6 @@ static void tps43_work_handler(struct k_work *work) {
     }
 #ifdef CONFIG_TOUCAN_FORCE_TRACE
     trace.before_flags = tps43_trace_flags(&drv_data->force);
-    trace.baseline_before = drv_data->force.baseline;
 #endif
 
     /*
@@ -616,8 +614,8 @@ static void tps43_work_handler(struct k_work *work) {
         } else {
             k_work_cancel_delayable(&drv_data->force_watchdog);
         }
-        LOG_DBG("Force strength=%u area=%u baseline=%u ready=%d down=%d drag=%d freeze=%d x=%u y=%u",
-                strength, area, drv_data->force.baseline, drv_data->force.ready,
+        LOG_DBG("Force strength=%u area=%u level=%u down=%d drag=%d freeze=%d x=%u y=%u",
+                strength, area, drv_data->force.press_level,
                 drv_data->force.down, drv_data->force.dragging,
                 drv_data->force.suppress_motion, x, y);
     }
@@ -757,7 +755,7 @@ done:
     trace.work_us = k_cyc_to_us_floor32(k_cycle_get_32() - trace_cycles);
     trace.frame_rc = ret;
     trace.extra |= (software_tap << 1) | (three_tap.click << 2) | (three_tap.claimed << 3);
-    tps43_trace_state(&trace, &drv_data->force);
+    tps43_trace_state(&trace, &drv_data->force, &config->force);
     tps43_trace_record(&trace, drv_data->touching);
 #endif
 
@@ -1696,22 +1694,16 @@ static int tps43_init(const struct device *dev) {
         .press_and_hold = DT_INST_PROP(inst, press_and_hold),                                        \
         .force_click = DT_INST_PROP(inst, force_click),                                              \
         .force = {                                                                                 \
-            .press_delta = DT_INST_PROP(inst, force_click_threshold),                               \
-            .release_delta = DT_INST_PROP(inst, force_click_release_threshold),                     \
-            .baseline_ms = DT_INST_PROP(inst, force_click_baseline_ms),                              \
-            .debounce_ms = DT_INST_PROP(inst, force_click_debounce_ms),                              \
-            .release_debounce_ms = DT_INST_PROP(inst, force_click_release_debounce_ms),              \
-            .press_percent = DT_INST_PROP(inst, force_click_threshold_percent),                     \
-            .release_percent = DT_INST_PROP(inst, force_click_release_threshold_percent),           \
-            .motion_threshold = DT_INST_PROP(inst, force_click_motion_threshold),                   \
-            .drag_threshold = DT_INST_PROP(inst, force_click_drag_threshold),                       \
-            .settle_ms = DT_INST_PROP(inst, force_click_settle_ms),                                  \
-            .moving_press_delta = DT_INST_PROP(inst, force_click_moving_threshold),                 \
-            .moving_press_percent = DT_INST_PROP(inst, force_click_moving_threshold_percent),       \
-            .motion_settle_ms = DT_INST_PROP(inst, force_click_motion_settle_ms),                    \
-            .drag_hold_ms = DT_INST_PROP(inst, force_click_drag_hold_ms),                            \
-            .repeat_ms = DT_INST_PROP(inst, force_click_repeat_ms),                                  \
-            .click_margin_percent = DT_INST_PROP(inst, force_click_margin_percent),                  \
+            .lock_level = DT_INST_PROP(inst, force_lock_level), \
+            .press_level = DT_INST_PROP(inst, force_press_level), \
+            .release_level = DT_INST_PROP(inst, force_release_level), \
+            .moving_lock_level = DT_INST_PROP(inst, force_moving_lock_level), \
+            .moving_press_level = DT_INST_PROP(inst, force_moving_press_level), \
+            .debounce_ms = DT_INST_PROP(inst, force_click_debounce_ms), \
+            .motion_threshold = DT_INST_PROP(inst, force_click_motion_threshold), \
+            .drag_threshold = DT_INST_PROP(inst, force_click_drag_threshold), \
+            .motion_settle_ms = DT_INST_PROP(inst, force_click_motion_settle_ms), \
+            .drag_hold_ms = DT_INST_PROP(inst, force_click_drag_hold_ms), \
             .touch_hold_ms = DT_INST_PROP(inst, press_and_hold)                                      \
                 ? DT_INST_PROP_OR(inst, hold_time, 250) : 0,                                       \
         },                                                                                         \
@@ -1774,47 +1766,20 @@ static int tps43_init(const struct device *dev) {
     BUILD_ASSERT(DT_INST_REG_ADDR(inst) == TPS43_I2C_ADDR, "I2C address mismatch");                     \
     BUILD_ASSERT(!DT_INST_PROP(inst, three_finger_tap) || DT_INST_PROP(inst, force_click),             \
                  "Three finger tap requires streaming force mode");                                \
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_margin_percent) > 0 &&                               \
-                 DT_INST_PROP(inst, force_click_margin_percent) <= 100,                            \
-                 "Click margin must be between 1 and 100 percent");                                 \
-    BUILD_ASSERT(!DT_INST_PROP(inst, force_click) || !DT_INST_PROP(inst, press_and_hold) ||           \
-                 (DT_INST_PROP_OR(inst, hold_time, 250) > 0 &&                                     \
-                  DT_INST_PROP_OR(inst, hold_time, 250) <= 1000), "Invalid touch hold time");        \
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_drag_hold_ms) >= 0 &&                                \
-                 DT_INST_PROP(inst, force_click_drag_hold_ms) <= 1000, "Invalid drag hold");         \
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_repeat_ms) >= 0 &&                                   \
-                 DT_INST_PROP(inst, force_click_repeat_ms) <= 1000, "Invalid repeat window");        \
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_moving_threshold) >=                                 \
-                 DT_INST_PROP(inst, force_click_threshold) &&                                       \
-                 DT_INST_PROP(inst, force_click_moving_threshold) <= UINT16_MAX,                     \
-                 "Moving threshold must be at least resting threshold");                           \
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_moving_threshold_percent) >=                         \
-                 DT_INST_PROP(inst, force_click_threshold_percent) &&                               \
-                 DT_INST_PROP(inst, force_click_moving_threshold_percent) <= 100,                    \
-                 "Invalid moving force ratio");                                                    \
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_motion_settle_ms) >= 0 &&                            \
-                 DT_INST_PROP(inst, force_click_motion_settle_ms) <= 1000, "Invalid motion settling");\
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_threshold) >                                         \
-                 DT_INST_PROP(inst, force_click_release_threshold), "Invalid force hysteresis");     \
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_threshold) <= UINT16_MAX &&                           \
-                 DT_INST_PROP(inst, force_click_release_threshold) >= 0, "Invalid force range");     \
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_baseline_ms) >= 0 &&                                  \
-                 DT_INST_PROP(inst, force_click_baseline_ms) <= 1000, "Invalid baseline interval");  \
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_debounce_ms) >= 0 &&                                  \
-                 DT_INST_PROP(inst, force_click_debounce_ms) <= 1000, "Invalid debounce interval");  \
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_release_debounce_ms) > 0 &&                           \
-                 DT_INST_PROP(inst, force_click_release_debounce_ms) <= 1000,                       \
-                 "Invalid release debounce interval");                                             \
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_threshold_percent) <= 100 &&                          \
-                 DT_INST_PROP(inst, force_click_release_threshold_percent) >= 0 &&                  \
-                 DT_INST_PROP(inst, force_click_threshold_percent) >=                               \
-                 DT_INST_PROP(inst, force_click_release_threshold_percent), "Invalid force ratio"); \
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_motion_threshold) > 0 &&                             \
-                 DT_INST_PROP(inst, force_click_drag_threshold) >=                                  \
-                 DT_INST_PROP(inst, force_click_motion_threshold) &&                                \
-                 DT_INST_PROP(inst, force_click_drag_threshold) <= UINT16_MAX, "Invalid dead zone");\
-    BUILD_ASSERT(DT_INST_PROP(inst, force_click_settle_ms) >= 0 &&                                    \
-                 DT_INST_PROP(inst, force_click_settle_ms) <= 1000, "Invalid settling interval");
+    BUILD_ASSERT(!DT_INST_PROP(inst, force_click) || (DT_INST_PROP(inst, force_release_level) > 0 && DT_INST_PROP(inst, force_release_level) < DT_INST_PROP(inst, force_lock_level) && DT_INST_PROP(inst, force_lock_level) < DT_INST_PROP(inst, force_press_level)), "Fixed release < lock < press required"); \
+    BUILD_ASSERT(!DT_INST_PROP(inst, force_click) || (DT_INST_PROP(inst, force_moving_lock_level) >= DT_INST_PROP(inst, force_lock_level) && DT_INST_PROP(inst, force_moving_press_level) >= DT_INST_PROP(inst, force_press_level) && DT_INST_PROP(inst, force_moving_lock_level) < DT_INST_PROP(inst, force_moving_press_level)), "Invalid moving levels"); \
+    BUILD_ASSERT(!DT_INST_PROP(inst, force_click) || (DT_INST_PROP(inst, force_click_motion_threshold) > 0 && DT_INST_PROP(inst, force_click_drag_threshold) >= DT_INST_PROP(inst, force_click_motion_threshold)), "Invalid motion/drag distance"); \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_lock_level) >= 0 && DT_INST_PROP(inst, force_lock_level) <= UINT16_MAX, "Invalid sensor range"); \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_press_level) >= 0 && DT_INST_PROP(inst, force_press_level) <= UINT16_MAX, "Invalid sensor range"); \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_release_level) >= 0 && DT_INST_PROP(inst, force_release_level) <= UINT16_MAX, "Invalid sensor range"); \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_moving_lock_level) >= 0 && DT_INST_PROP(inst, force_moving_lock_level) <= UINT16_MAX, "Invalid sensor range"); \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_moving_press_level) >= 0 && DT_INST_PROP(inst, force_moving_press_level) <= UINT16_MAX, "Invalid sensor range"); \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_motion_threshold) >= 0 && DT_INST_PROP(inst, force_click_motion_threshold) <= UINT16_MAX, "Invalid sensor range"); \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_drag_threshold) >= 0 && DT_INST_PROP(inst, force_click_drag_threshold) <= UINT16_MAX, "Invalid sensor range"); \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_debounce_ms) >= 0 && DT_INST_PROP(inst, force_click_debounce_ms) <= 1000, "Invalid time"); \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_motion_settle_ms) >= 0 && DT_INST_PROP(inst, force_click_motion_settle_ms) <= 1000, "Invalid time"); \
+    BUILD_ASSERT(DT_INST_PROP(inst, force_click_drag_hold_ms) >= 0 && DT_INST_PROP(inst, force_click_drag_hold_ms) <= 1000, "Invalid time"); \
+    BUILD_ASSERT(!DT_INST_PROP(inst, press_and_hold) || (DT_INST_PROP_OR(inst, hold_time, 250) > 0 && DT_INST_PROP_OR(inst, hold_time, 250) <= 1000), "Invalid hold time");
 
 
 DT_INST_FOREACH_STATUS_OKAY(TPS43_INIT)

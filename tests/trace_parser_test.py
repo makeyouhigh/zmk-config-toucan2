@@ -24,6 +24,25 @@ def fixture(start=100, sample=116):
 
 
 class TraceTests(unittest.TestCase):
+    def test_v14_fixed_levels(self):
+        raw = bytearray(16)
+        raw[4] = 1
+        raw[13:15] = (4700).to_bytes(2, 'big')
+        payload = parser.WIRE_V2.pack(116, 900, 850, bytes(raw),
+            1, 1 | (1 << 2), 4250, 4500, 4000, 0, 0,
+            -3, 4, 1, 0, 32767, 32767, 0, 0, 1, 0)
+        data = {'lines': ['DATA,v14,2,1,0,100,60',
+            f'R,0,{payload.hex()},{parser.checksum(payload):08x}', 'END,1']}
+        result = parser.parse(data)
+        frame = result['frames'][0]
+        self.assertEqual(frame['after_state'], ['active', 'down'])
+        self.assertEqual((frame['lock_level'], frame['press_level'], frame['release_level']),
+                         (4250, 4500, 4000))
+        self.assertNotIn('baseline', frame)
+        self.assertEqual(result['force_edges'][0]['press_level'], 4500)
+        data['lines'][0] = 'DATA,v14,1,1,0,100,60'
+        with self.assertRaises(ValueError): parser.parse(data)
+
     def test_v13_version(self):
         data = fixture()
         data["lines"][0] = data["lines"][0].replace("v11", "v13")
