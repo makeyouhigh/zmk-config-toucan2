@@ -15,7 +15,6 @@
 #     shield: corne_left
 #     snippet: studio-rpc-usb-uart
 #     cmake-args: -DCONFIG_ZMK_STUDIO=y
-    artifact-name: toucan_left-v9
 #     artifact-name: corne_left_with_studio
 #
 ---
@@ -24,6 +23,7 @@ include:
     shield: toucan_left rgbled_adapter nice_view_gem
     snippet: studio-rpc-usb-uart
     cmake-args: -DCONFIG_ZMK_STUDIO=y
+    artifact-name: toucan_left-v9
   - board: seeeduino_xiao_ble
     shield: toucan_right rgbled_adapter
     artifact-name: toucan_right-v9
