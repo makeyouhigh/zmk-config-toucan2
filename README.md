@@ -1,4 +1,4 @@
-현재 펌웨어: [v15 — Keymap Editor Custom Behaviors 등록 보완](FIRMWARE_VERSIONS.md). 양쪽 적용 대상입니다. 7번 SYS 레이어 Y/H·U/J·I/K에서 억제·클릭·해제값을 조절합니다. [편집기 명령](docs/force-behaviors-v15.md) · [고정값과 판정](docs/fixed-force-v14.md).
+현재 펌웨어: [v20 — 강도 파형 클릭과 0.25초 홀드 드래그 분리](FIRMWARE_VERSIONS.md). 왼쪽 v19를 유지하고 오른쪽만 v20으로 적용하면 됩니다. [v20 판정·설정·충돌 처리](docs/force-pulse-v20.md). SYS 7번의 Y/H·U/J·I/K 조절과 LCD 표시는 유지합니다.
 
 # ZMK config for beekeeb Toucan2 Keyboard
 

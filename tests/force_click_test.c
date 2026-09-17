@@ -61,12 +61,18 @@ static void test_two_peaks_above_release_and_noise(void) {
     assert(!f.s.down && !f.s.pulse_ready);
     for(int i=0;i<200;i++) {
         assert(sample(&f,i%2?5480:5380)==0);
-        assert(!f.s.down && !f.s.dragging);
+        assert(!f.s.down && !f.s.dragging && !f.s.suppress_motion);
     }
     assert(frame(&f,0,0,true)==0);
     sample(&f,3300);
     assert(sample(&f,5500)==0); /* isolated one-frame spike rejected */
     assert(sample(&f,3300)==0 && !f.s.pulse_ready);
+    f=fresh(); sample(&f,5100);
+    assert(sample(&f,5301)==0 && f.s.suppress_motion);
+    assert(sample(&f,5299)==0 && !f.s.suppress_motion);
+    for(int i=0;i<200;i++) {
+        assert(sample(&f,i%2?5301:5299)==0 && !f.s.suppress_motion);
+    }
 }
 static void test_repeated_fast_and_slow_clicks(void) {
     const int held_frames[]={2,8,25};

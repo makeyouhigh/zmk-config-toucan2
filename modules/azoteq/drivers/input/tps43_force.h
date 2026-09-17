@@ -122,7 +122,7 @@ tps43_force_step(struct tps43_force_state *s, const struct tps43_force_config *c
         s->candidate_moving = moving;
         s->lock_level = moving ? c->moving_lock_level : c->lock_level;
         s->press_level = moving ? c->moving_press_level : c->press_level;
-        if (strength >= s->lock_level && rise >= c->pulse_delta / 2U) {
+        if (strength >= s->lock_level && rise >= c->pulse_delta) {
             s->prepress = true; s->lock_ms = now;
         }
     }
@@ -147,7 +147,10 @@ tps43_force_step(struct tps43_force_state *s, const struct tps43_force_config *c
             return TPS43_FORCE_CLICK;
         }
     } else if (!s->candidate &&
-               (strength < s->lock_level || rise < c->pulse_delta / 2U)) {
+               (strength < s->lock_level || rise < c->pulse_delta)) {
+        /* A rejected excursion must begin a fresh rise. Chatter around the
+         * previous rise boundary must not repeatedly restart pointer locks. */
+        if (s->prepress) { s->trough = s->peak = strength; }
         s->prepress = false;
     }
     /* Bound the lock, including an arbitrarily high plateau. Never queue or
