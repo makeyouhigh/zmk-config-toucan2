@@ -19,7 +19,7 @@ properties:
   force-release-level:
     type: int
     default: 0
-    description: A qualified pulse completes at this fixed level or after force-click-pulse-delta decline from its peak, whichever comes first. Hold drag releases on lift.
+    description: A qualified pulse completes at this fixed level, a full pulse decline, or a sustained shallow decline. Hold drag releases on lift.
 
   force-moving-lock-level:
     type: int
@@ -34,7 +34,7 @@ properties:
   force-click-debounce-ms:
     type: int
     default: 8
-    description: Continuous time above the fixed press floor and minimum rise before a pulse qualifies. Falling strength has no extra timer.
+    description: Continuous time above the fixed press floor and minimum rise before a pulse qualifies. Small declines require 16 ms; a full decline or fixed release completes immediately.
 
   force-click-motion-settle-ms:
     type: int
@@ -54,7 +54,7 @@ properties:
   force-click-pulse-delta:
     type: int
     default: 200
-    description: Fixed minimum raw-strength rise and decline identifying one pulse. No percentage scaling or first-contact calibration. Does not affect hold drag.
+    description: Fixed rise for the first pulse and immediate full-decline completion. Repeat rise is 100 within 500 ms; a 20-unit decline persisting 16 ms also completes a pulse, with recovery hysteresis of 10. No first-contact calibration. Force preparation cancels timed hold.
 
   rdy-gpios:
     type: phandle-array

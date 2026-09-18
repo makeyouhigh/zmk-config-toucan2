@@ -63,6 +63,8 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(parser.parse(data)['version'], 'v19')
         data['lines'][0] = 'DATA,v20,2,1,0,100,60'
         self.assertEqual(parser.parse(data)['version'], 'v20')
+        data['lines'][0] = 'DATA,v21,2,1,0,100,60'
+        self.assertEqual(parser.parse(data)['version'], 'v21')
         data['lines'][0] = 'DATA,v14,1,1,0,100,60'
         with self.assertRaises(ValueError): parser.parse(data)
 

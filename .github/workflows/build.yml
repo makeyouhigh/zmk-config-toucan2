@@ -20,4 +20,4 @@ jobs:
     needs: force-click-tests
     uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@v0.3
     with:
-      archive_name: firmware-v20
+      archive_name: firmware-v21

@@ -154,19 +154,51 @@ static void test_initial_hold_only_drag(void) {
     assert(f.s.hold_cancelled); /* travel before 250 ms cannot become drag later */
     for(int i=0;i<50;i++) assert(sample(&f,3300)==0);
     f.x+=30; assert(sample(&f,3300)==0 && !f.s.dragging);
-    /* Landing strength can rise while the user holds still. It does not cancel
-     * the independent timed hold, even above the configured click floor. */
+    /* A qualified force pulse takes priority over the timed hold. */
     f=fresh(); sample(&f,3300); qualify(&f,5500);
     for(int i=0;i<32;i++) assert(sample(&f,5500)==0);
-    f.x+=17; assert(sample(&f,5500)==TPS43_FORCE_PRESS && f.s.dragging);
-    assert(!f.s.pulse_ready && !f.s.prepress);
-    assert(sample(&f,3300)==0 && f.s.down);
-    assert(frame(&f,0,0,true)==TPS43_FORCE_RELEASE);
+    f.x+=17; assert(sample(&f,5500)==0 && !f.s.dragging && !f.s.down);
+    assert(f.s.pulse_ready && f.s.hold_cancelled);
+    assert(sample(&f,3300)==TPS43_FORCE_CLICK && !f.s.down);
+    assert(frame(&f,0,0,true)==0);
     /* A completed click cannot unexpectedly arm hold during a double click. */
     f=fresh(); sample(&f,3300); qualify(&f,5500);
     assert(sample(&f,5300)==TPS43_FORCE_CLICK);
     for(int i=0;i<50;i++) assert(sample(&f,5300)==0);
     f.x+=17; assert(sample(&f,5300)==0 && !f.s.dragging);
+}
+static void test_shallow_valley_and_force_priority(void) {
+    struct fixture f=fresh(); sample(&f,5100); qualify(&f,5500);
+    assert(sample(&f,5477)==0); /* observed 23-unit valley */
+    assert(sample(&f,5477)==0);
+    assert(sample(&f,5486)==TPS43_FORCE_CLICK); /* small recovery, still below peak */
+    assert(!f.s.down && f.s.hold_cancelled);
+    qualify(&f,5620); /* second rise 134, above the fixed absolute floor */
+    assert(sample(&f,5590)==0);
+    assert(sample(&f,5590)==0);
+    assert(sample(&f,5590)==TPS43_FORCE_CLICK);
+    for(int i=0;i<100;i++) assert(sample(&f,5590)==0);
+    assert(!f.s.down);
+    /* Outside the repeat window, small rises do not qualify new clicks. */
+    assert(sample(&f,5700)==0); assert(sample(&f,5700)==0);
+    assert(!f.s.pulse_ready);
+    /* One-frame drop then recovery must not split a sustained press. */
+    f=fresh(); sample(&f,5100); qualify(&f,5500);
+    for(int i=0;i<100;i++) {
+        assert(sample(&f,i%2?5500:5460)==0);
+        assert(!f.s.down);
+    }
+    assert(frame(&f,0,0,true)==TPS43_FORCE_CLICK);
+    /* The squeeze and a >16-unit centroid shift arrive after 250 ms together. */
+    f=fresh(); sample(&f,3300);
+    for(int i=0;i<32;i++) assert(sample(&f,3300)==0);
+    f.x+=30; qualify(&f,5500);
+    assert(!f.s.down && !f.s.dragging && f.s.hold_cancelled);
+    assert(sample(&f,5300)==TPS43_FORCE_CLICK);
+    /* Once that force contact owns clicks, later travel never starts drag. */
+    for(int i=0;i<200;i++) {
+        f.x++; assert(sample(&f,5300)==0 && !f.s.down);
+    }
 }
 static void test_invalid_lift_and_bounds(void) {
     assert(tps43_force_config_valid(&config));
@@ -359,6 +391,7 @@ static void test_force_status_transfer(void) {
 }
 
 int main(void) {
+    test_shallow_valley_and_force_priority();
     test_force_limits(); test_force_status_transfer(); test_adjustable_levels();
     test_fixed_floors_and_waveform(); test_two_peaks_above_release_and_noise();
     test_repeated_fast_and_slow_clicks(); test_moving_profile_and_motion();
