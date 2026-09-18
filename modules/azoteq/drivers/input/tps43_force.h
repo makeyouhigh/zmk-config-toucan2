@@ -31,10 +31,10 @@ struct tps43_force_config {
 };
 struct tps43_force_state {
     bool active, blocked, down, tap_consumed;
-    bool candidate, prepress, candidate_moving, pulse_ready;
+    bool candidate, prepress, pulse_ready;
     bool dragging, suppress_motion, hold_cancelled, falling, clicked;
     int64_t started_ms, last_sample_ms, motion_until_ms;
-    int64_t candidate_ms, pressed_ms, lock_ms;
+    int64_t candidate_ms, lock_ms;
     int64_t falling_ms, clicked_ms;
     uint16_t motion_x, motion_y, hold_x, hold_y;
     uint16_t lock_level, press_level, trough, peak;
@@ -120,7 +120,7 @@ tps43_force_step(struct tps43_force_state *s, const struct tps43_force_config *c
         } else if (tps43_force_moved(x, y, s->hold_x, s->hold_y, c->drag_threshold)) {
             s->pulse_ready = s->candidate = s->prepress = false;
             s->down = s->dragging = s->tap_consumed = true;
-            s->pressed_ms = now; s->suppress_motion = false;
+            s->suppress_motion = false;
             return TPS43_FORCE_PRESS;
         }
     }
@@ -133,7 +133,6 @@ tps43_force_step(struct tps43_force_state *s, const struct tps43_force_config *c
             moving = true; s->motion_until_ms = now + c->motion_settle_ms;
         }
         if (travelled) { s->motion_x = x; s->motion_y = y; }
-        s->candidate_moving = moving;
         s->lock_level = moving ? c->moving_lock_level : c->lock_level;
         s->press_level = moving ? c->moving_press_level : c->press_level;
         if (strength >= s->lock_level && rise >= c->pulse_delta) {

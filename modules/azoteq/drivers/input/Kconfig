@@ -16,13 +16,5 @@ config INPUT_TPS43_INIT_PRIORITY
     help
       Device driver initialization priority.
 
-config TOUCAN_FORCE_TRACE
-    bool "Capture bounded force diagnostics in RAM"
-    depends on USB_CDC_ACM
-    default n
-    help
-      Explicit ten-second sensor/state capture on the peripheral only.
-      No BLE telemetry and no per-frame serial output.
-
 endif # ZMK_SENSOR_TPS43
 

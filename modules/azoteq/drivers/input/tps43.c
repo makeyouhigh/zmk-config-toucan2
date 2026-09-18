@@ -13,10 +13,8 @@
 #include <stdlib.h>
 #include <math.h>
 #include <errno.h>
-#include <string.h>
 
 #include "tps43.h"
-#include "tps43_trace.h"
 
 LOG_MODULE_REGISTER(tps43, CONFIG_INPUT_LOG_LEVEL);
 
@@ -45,7 +43,6 @@ static int tps43_force_report(const struct device *dev, enum tps43_force_event e
     if (event != TPS43_FORCE_NONE) {
         int rc = input_report_key(dev, INPUT_BTN_0, event == TPS43_FORCE_PRESS, true, K_MSEC(5));
         if (event == TPS43_FORCE_RELEASE && rc < 0) { data->force_release_pending = true; }
-        LOG_DBG("Force click %s", event == TPS43_FORCE_PRESS ? "down" : "up");
         return rc;
     }
     return INT16_MAX;
@@ -94,18 +91,7 @@ static void tps43_force_watchdog(struct k_work *work) {
                                               struct tps43_drv_data, force_watchdog);
     k_sem_take(&data->lock, K_FOREVER);
     if (data->touching || data->force.down || data->force_release_pending) {
-#ifdef CONFIG_TOUCAN_FORCE_TRACE
-        struct tps43_trace_record trace = {
-            .sample_ms = k_uptime_get_32(), .kind = 2,
-            .before_flags = tps43_trace_flags(&data->force),
-            .button_rc = INT16_MAX, .x_rc = INT16_MAX, .y_rc = INT16_MAX,
-        };
-#endif
         tps43_force_cancel_and_report(data->dev);
-#ifdef CONFIG_TOUCAN_FORCE_TRACE
-        tps43_trace_state(&trace, &data->force, &data->force_runtime);
-        tps43_trace_record(&trace, false);
-#endif
         LOG_WRN("Touch and force released: no fresh sensor data");
         if (!data->suspended) {
             tps43_force_communication(data->dev);
@@ -157,39 +143,6 @@ static int read_sequence_registers(const struct device *dev, uint16_t reg, void 
     addr_buf[1] = (uint8_t)(reg & 0xFF);
 
     return i2c_write_read_dt(&config->i2c_bus, addr_buf, 2, val, len);
-}
-
-/**
- * @brief Reads a 16-bit trackpad register via I2C
- *
- * Performs reading of a 16-bit value from the specified trackpad register.
- * Data is interpreted as big-endian (MSB first).
- *
- * @param dev Pointer to trackpad device
- * @param reg Register address (16-bit)
- * @param val Pointer to variable to store the read value
- * @return 0 on success, negative error code on failure
- */
-static int tps43_i2c_read_reg16(const struct device *dev, uint16_t reg, uint16_t *val)
-{
-    const struct tps43_config *config = dev->config;
-    uint8_t buf[2];
-    // forms 2-byte register address: (MSB, LSB)
-    // MSB: shift right by 8 bits (0x2F00 -> 0x2F)
-    // LSB: bitwise AND with mask - mask leaves only lower byte (0x2F00 -> 0x00)
-    uint8_t reg_buf[2] = {reg >> 8, reg & 0xFF};
-    int ret;
-
-    // writes register address (reg_buf) and reads 2 bytes of data (into buffer buf)
-    ret = i2c_write_read_dt(&config->i2c_bus, reg_buf, sizeof(reg_buf), buf, sizeof(buf));
-    if (ret < 0) {
-        LOG_ERR("Register 0x%04x read error: %d", reg, ret);
-        return ret;
-    }
-
-    // converts big-endian data (MSB first) back to 16-bit value
-    *val = (buf[0] << 8) | buf[1];
-    return 0;
 }
 
 /**
@@ -302,14 +255,6 @@ static int tps43_i2c_write_reg8(const struct device *dev, uint16_t reg, uint8_t 
  }
 
 
-/** Dump charging state */
-static void tps43_dump_status(const struct device *dev) {
-
-    uint8_t sys_info = 0;
-    tps43_i2c_read_reg8(dev, TPS43_REG_SYSTEM_INFO_0, &sys_info);
-    LOG_INF("Charging state: 0x%02X", sys_info & TPS43_CHARGING_MODE_MASK); // for debugging charging mode
-}
-
 /** Force communication start with the trackpad.  See datasheet 8.8.2 */
 static void tps43_force_communication(const struct device *dev) {
     // Do a bogus read where we don't care about a possible NACK
@@ -373,7 +318,9 @@ static int tps43_set_suspend_internal(const struct device *dev, bool suspend, bo
 
     } else if (!drv_data->suspended) {
         tps43_force_communication(dev);
-        tps43_dump_status(dev); // for debugging power management behavior
+        /* IQS5xx 8.8.2: allow >=150 us after a low-power NACK.
+         * This replaces the removed diagnostic register read, not a sample delay. */
+        k_busy_wait(200);
 
         // Read current value
         ret = tps43_i2c_read_reg8(dev, TPS43_REG_SYSTEM_CONTROL_1, &control_reg);
@@ -496,13 +443,6 @@ static void tps43_work_handler(struct k_work *work) {
     bool software_tap = false;
     struct tps43_three_tap_result three_tap = {0};
     int ret;
-#ifdef CONFIG_TOUCAN_FORCE_TRACE
-    uint32_t trace_cycles = k_cycle_get_32();
-    struct tps43_trace_record trace = {
-        .sample_ms = k_uptime_get_32(), .kind = 1,
-        .button_rc = INT16_MAX, .x_rc = INT16_MAX, .y_rc = INT16_MAX,
-    };
-#endif
 
     // If device is in suspend, ignore interrupt (RDY should be disabled)
     if (drv_data->suspended) {
@@ -519,9 +459,6 @@ static void tps43_work_handler(struct k_work *work) {
         k_sem_give(&drv_data->lock);
         return;
     }
-#ifdef CONFIG_TOUCAN_FORCE_TRACE
-    trace.before_flags = tps43_trace_flags(&drv_data->force);
-#endif
 
     /*
      * Read the contiguous block from GESTURE_EVENTS_0 through REL_Y, extended
@@ -552,10 +489,6 @@ static void tps43_work_handler(struct k_work *work) {
         }
         goto done;
     }
-#ifdef CONFIG_TOUCAN_FORCE_TRACE
-    memcpy(trace.raw, touch_data, read_len);
-    trace.sample_ms = k_uptime_get_32();
-#endif
 
     if (config->force_click && (touch_data[2] & TPS43_SHOW_RESET)) {
         tps43_force_cancel_and_report(dev);
@@ -592,10 +525,6 @@ static void tps43_work_handler(struct k_work *work) {
      * cycle start before input callbacks or Bluetooth queues can block us. */
     tps43_end_communication_window(dev);
     communication_closed = true;
-#ifdef CONFIG_TOUCAN_FORCE_TRACE
-    trace.kind = 0;
-    trace.io_us = k_cyc_to_us_floor32(k_cycle_get_32() - trace_cycles);
-#endif
     if (config->force_click) {
         uint16_t strength = sys_get_be16(&touch_data[TPS43_REG_TOUCH_STRENGTH -
                                                     TPS43_REG_GESTURE_EVENTS_0]);
@@ -624,15 +553,7 @@ static void tps43_work_handler(struct k_work *work) {
         }
         enum tps43_force_event force_event = tps43_force_step(&drv_data->force, &drv_data->force_runtime,
                                                sample_ms, num_fingers, strength, valid, x, y);
-        int force_rc = tps43_force_report(dev, force_event);
-#ifdef CONFIG_TOUCAN_FORCE_TRACE
-        trace.sample_ms = (uint32_t)sample_ms;
-        trace.event = force_event;
-        trace.button_rc = force_rc;
-        trace.extra = valid ? 1 : 0;
-#else
-        ARG_UNUSED(force_rc);
-#endif
+        tps43_force_report(dev, force_event);
         if (config->single_tap) {
             software_tap = tps43_tap_step(&drv_data->tap, sample_ms, num_fingers,
                                            valid, drv_data->force.tap_consumed, x, y,
@@ -647,10 +568,6 @@ static void tps43_work_handler(struct k_work *work) {
         } else {
             k_work_cancel_delayable(&drv_data->force_watchdog);
         }
-        LOG_DBG("Force strength=%u area=%u level=%u down=%d drag=%d freeze=%d x=%u y=%u",
-                strength, area, drv_data->force.press_level,
-                drv_data->force.down, drv_data->force.dragging,
-                drv_data->force.suppress_motion, x, y);
     }
     toucan_force_levels_contact(is_touching);
     if (is_touching != drv_data->touching) {
@@ -759,22 +676,10 @@ static void tps43_work_handler(struct k_work *work) {
             LOG_DBG("Sending movement: dx=%d, dy=%d", rel_x, rel_y);
 
             if (rel_x != 0) {
-                int rc = input_report_rel(dev, INPUT_REL_X, rel_x, rel_y == 0, K_MSEC(5));
-#ifdef CONFIG_TOUCAN_FORCE_TRACE
-                trace.x_rc = rc;
-                trace.output_x = rel_x;
-#else
-                ARG_UNUSED(rc);
-#endif
+                input_report_rel(dev, INPUT_REL_X, rel_x, rel_y == 0, K_MSEC(5));
             }
             if (rel_y != 0) {
-                int rc = input_report_rel(dev, INPUT_REL_Y, rel_y, true, K_MSEC(5));
-#ifdef CONFIG_TOUCAN_FORCE_TRACE
-                trace.y_rc = rc;
-                trace.output_y = rel_y;
-#else
-                ARG_UNUSED(rc);
-#endif
+                input_report_rel(dev, INPUT_REL_Y, rel_y, true, K_MSEC(5));
             }
         }
     }
@@ -785,13 +690,6 @@ done:
     if (!communication_closed) {
         tps43_end_communication_window(dev);
     }
-#ifdef CONFIG_TOUCAN_FORCE_TRACE
-    trace.work_us = k_cyc_to_us_floor32(k_cycle_get_32() - trace_cycles);
-    trace.frame_rc = ret;
-    trace.extra |= (software_tap << 1) | (three_tap.click << 2) | (three_tap.claimed << 3);
-    tps43_trace_state(&trace, &drv_data->force, &drv_data->force_runtime);
-    tps43_trace_record(&trace, drv_data->touching);
-#endif
 
     // Release semaphore after completing all I2C operations
     k_sem_give(&drv_data->lock);
@@ -1332,285 +1230,6 @@ static int tps43_set_suspend(const struct device *dev, bool suspend) {
     return tps43_set_suspend_internal(dev, suspend, false);
 }
 
-static void tps43_dump_registers(const struct device *dev) {
-    uint8_t reg8;
-    uint16_t reg16;
-    int ret = 0;
-    int read_ret;
-
-    LOG_INF("Dumping TPS43 registers");
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_SYSTEM_INFO_0, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("SYSTEM_INFO_0 (0x%04X): 0x%02X", TPS43_REG_SYSTEM_INFO_0, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_SYSTEM_INFO_1, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("SYSTEM_INFO_1 (0x%04X): 0x%02X", TPS43_REG_SYSTEM_INFO_1, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_SYSTEM_CONTROL_0, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("SYSTEM_CONTROL_0 (0x%04X): 0x%02X", TPS43_REG_SYSTEM_CONTROL_0, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_SYSTEM_CONTROL_1, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("SYSTEM_CONTROL_1 (0x%04X): 0x%02X", TPS43_REG_SYSTEM_CONTROL_1, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_SYSTEM_CONFIG_0, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("SYSTEM_CONFIG_0 (0x%04X): 0x%02X", TPS43_REG_SYSTEM_CONFIG_0, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_SYSTEM_CONFIG_1, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("SYSTEM_CONFIG_1 (0x%04X): 0x%02X", TPS43_REG_SYSTEM_CONFIG_1, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_GLOBAL_ATI_C, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("GLOBAL_ATI_C (0x%04X): 0x%02X", TPS43_REG_GLOBAL_ATI_C, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_ATI_TARGET, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("ATI_TARGET (0x%04X): 0x%04X", TPS43_REG_ATI_TARGET, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_REF_DRIFT_LIMIT, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("REF_DRIFT_LIMIT (0x%04X): 0x%02X", TPS43_REG_REF_DRIFT_LIMIT, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_REATI_LOWER_LIMIT, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("REATI_LOWER_LIMIT (0x%04X): 0x%02X", TPS43_REG_REATI_LOWER_LIMIT, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_REATI_UPPER_LIMIT, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("REATI_UPPER_LIMIT (0x%04X): 0x%02X", TPS43_REG_REATI_UPPER_LIMIT, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_MAX_COUNT_LIMIT, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("MAX_COUNT_LIMIT (0x%04X): 0x%04X", TPS43_REG_MAX_COUNT_LIMIT, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_ATI_RETRY_TIME, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("ATI_RETRY_TIME (0x%04X): 0x%02X", TPS43_REG_ATI_RETRY_TIME, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_REPORT_RATE_ACTIVE, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("REPORT_RATE_ACTIVE (0x%04X): 0x%04X", TPS43_REG_REPORT_RATE_ACTIVE, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_REPORT_RATE_IDLE_TOUCH, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("REPORT_RATE_IDLE_TOUCH (0x%04X): 0x%04X", TPS43_REG_REPORT_RATE_IDLE_TOUCH, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_REPORT_RATE_IDLE, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("REPORT_RATE_IDLE (0x%04X): 0x%04X", TPS43_REG_REPORT_RATE_IDLE, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_REPORT_RATE_LP1, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("REPORT_RATE_LP1 (0x%04X): 0x%04X", TPS43_REG_REPORT_RATE_LP1, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_REPORT_RATE_LP2, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("REPORT_RATE_LP2 (0x%04X): 0x%04X", TPS43_REG_REPORT_RATE_LP2, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_TIMEOUT_ACTIVE, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("TIMEOUT_ACTIVE (0x%04X): 0x%02X", TPS43_REG_TIMEOUT_ACTIVE, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_TIMEOUT_IDLE_TOUCH, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("TIMEOUT_IDLE_TOUCH (0x%04X): 0x%02X", TPS43_REG_TIMEOUT_IDLE_TOUCH, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_TIMEOUT_IDLE, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("TIMEOUT_IDLE (0x%04X): 0x%02X", TPS43_REG_TIMEOUT_IDLE, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_TIMEOUT_LP1, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("TIMEOUT_LP1 (0x%04X): 0x%02X", TPS43_REG_TIMEOUT_LP1, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_REF_UPDATE_TIME, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("REF_UPDATE_TIME (0x%04X): 0x%02X", TPS43_REG_REF_UPDATE_TIME, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_XY_STATIC_BETA, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("XY_STATIC_BETA (0x%04X): 0x%02X", TPS43_REG_XY_STATIC_BETA, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_ALP_COUNT_BETA, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("ALP_COUNT_BETA (0x%04X): 0x%02X", TPS43_REG_ALP_COUNT_BETA, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_ALP1_LTA_BETA, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("ALP1_LTA_BETA (0x%04X): 0x%02X", TPS43_REG_ALP1_LTA_BETA, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_ALP2_LTA_BETA, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("ALP2_LTA_BETA (0x%04X): 0x%02X", TPS43_REG_ALP2_LTA_BETA, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_XY_DYNAMIC_FILTER_BOTTOM, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("XY_DYNAMIC_FILTER_BOTTOM (0x%04X): 0x%02X", TPS43_REG_XY_DYNAMIC_FILTER_BOTTOM, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_XY_DYNAMIC_FILTER_LOWER, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("XY_DYNAMIC_FILTER_LOWER (0x%04X): 0x%02X", TPS43_REG_XY_DYNAMIC_FILTER_LOWER, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_XY_DYNAMIC_FILTER_UPPER, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("XY_DYNAMIC_FILTER_UPPER (0x%04X): 0x%04X", TPS43_REG_XY_DYNAMIC_FILTER_UPPER, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_X_RESOLUTION, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("X_RESOLUTION (0x%04X): 0x%04X", TPS43_REG_X_RESOLUTION, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_Y_RESOLUTION, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("Y_RESOLUTION (0x%04X): 0x%04X", TPS43_REG_Y_RESOLUTION, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_TAP_TIME, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("TAP_TIME (0x%04X): %u ms", TPS43_REG_TAP_TIME, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_TAP_DISTANCE, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("TAP_DISTANCE (0x%04X): %u px", TPS43_REG_TAP_DISTANCE, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_HOLD_TIME, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("HOLD_TIME (0x%04X): %u ms", TPS43_REG_HOLD_TIME, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_SWIPE_INITIAL_TIME, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("SWIPE_INITIAL_TIME (0x%04X): %u ms", TPS43_REG_SWIPE_INITIAL_TIME, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_SWIPE_INITIAL_DISTANCE, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("SWIPE_INITIAL_DISTANCE (0x%04X): %u px", TPS43_REG_SWIPE_INITIAL_DISTANCE, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_SWIPE_CONSECUTIVE_TIME, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("SWIPE_CONSECUTIVE_TIME (0x%04X): %u ms", TPS43_REG_SWIPE_CONSECUTIVE_TIME, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_SWIPE_CONSECUTIVE_DISTANCE, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("SWIPE_CONSECUTIVE_DISTANCE (0x%04X): %u px", TPS43_REG_SWIPE_CONSECUTIVE_DISTANCE, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_SWIPE_ANGLE, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("SWIPE_ANGLE (0x%04X): 0x%02X", TPS43_REG_SWIPE_ANGLE, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_SCROLL_INITIAL_DISTANCE, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("SCROLL_INITIAL_DISTANCE (0x%04X): %u px", TPS43_REG_SCROLL_INITIAL_DISTANCE, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg8(dev, TPS43_REG_SCROLL_ANGLE, &reg8);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("SCROLL_ANGLE (0x%04X): 0x%02X", TPS43_REG_SCROLL_ANGLE, reg8);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_ZOOM_INITIAL_DISTANCE, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("ZOOM_INITIAL_DISTANCE (0x%04X): %u px", TPS43_REG_ZOOM_INITIAL_DISTANCE, reg16);
-    }
-
-    read_ret = tps43_i2c_read_reg16(dev, TPS43_REG_ZOOM_CONSECUTIVE_DISTANCE, &reg16);
-    ret |= read_ret;
-    if (read_ret == 0) {
-        LOG_INF("ZOOM_CONSECUTIVE_DISTANCE (0x%04X): %u px", TPS43_REG_ZOOM_CONSECUTIVE_DISTANCE, reg16);
-    }
-
-    if (ret != 0) {
-        LOG_WRN("error: some reads failed...");
-    }
-
-    tps43_end_communication_window(dev);
-}
-
 /**
  * @brief Initializes TPS43 trackpad driver
  *
@@ -1679,7 +1298,8 @@ static int tps43_init(const struct device *dev) {
         return ret;
     }
 
-    tps43_dump_registers(dev);
+    /* Configuration must still close its I2C window without the debug dump. */
+    tps43_end_communication_window(dev);
     drv_data->initialized = true;
     drv_data->suspended = false;
 

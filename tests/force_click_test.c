@@ -4,8 +4,6 @@
 #include "../modules/azoteq/drivers/input/tps43_force.h"
 #include "../modules/azoteq/drivers/input/tps43_tap.h"
 #include "../modules/azoteq/drivers/input/tps43_three_tap.h"
-#define CONFIG_TOUCAN_FORCE_TRACE 1
-#include "../modules/azoteq/drivers/input/tps43_trace.h"
 #include <toucan/touch_lease.h>
 #include <toucan/force_status.h>
 #include <string.h>
@@ -261,14 +259,6 @@ static void test_taps_and_force_ownership(void) {
     assert(!tps43_two_finger_motion(3,true));
     assert(tps43_two_finger_motion(2,false));
 }
-static void test_trace_contains_actual_fixed_levels(void) {
-    struct fixture f=fresh(); sample(&f,3300); qualify(&f,5200);
-    struct tps43_trace_record r={.sample_ms=(uint32_t)f.t};
-    tps43_trace_state(&r,&f.s,&config);
-    assert(r.lock_level==4250 && r.press_level==4500 && r.release_level==4000);
-    assert(r.after_flags&(1<<11)); /* pending pulse, no held button */
-    assert(!(r.after_flags&((1<<2)|(1<<8))));
-}
 static void test_three_tap_rejection_and_missing_first_slot(void) {
     struct tps43_three_tap_state s={0};
     assert(tps43_three_tap_step(&s,0,3,true,false,500,500,200,64).claimed);
@@ -397,7 +387,7 @@ int main(void) {
     test_repeated_fast_and_slow_clicks(); test_moving_profile_and_motion();
     test_force_never_drags_or_locks_forever(); test_initial_hold_only_drag();
     test_invalid_lift_and_bounds(); test_taps_and_force_ownership();
-    test_trace_contains_actual_fixed_levels(); test_three_tap_rejection_and_missing_first_slot();
-    puts("3000 pulse clicks, high valleys/plateaus, independent 250 ms hold, taps and trace passed");
+    test_three_tap_rejection_and_missing_first_slot();
+    puts("3000 pulse clicks, high valleys/plateaus, independent 250 ms hold, taps passed");
     return 0;
 }
