@@ -1,9 +1,9 @@
+#include <dt-bindings/zmk/force.h>
 #include <behaviors.dtsi>
 #include <dt-bindings/zmk/bt.h>
 #include <dt-bindings/zmk/keys.h>
 #include <dt-bindings/zmk/outputs.h>
 #include <dt-bindings/zmk/pointing.h>
-#include <dt-bindings/zmk/force.h>
 
 #define BASE 0
 #define NAV  1
@@ -249,6 +249,7 @@
         /* Explicit zero-parameter behaviors are selectable in Keymap Editor.
          * The generic two-parameter force_cfg remains available to ZMK Studio.
          * Keep device names short for split behavior transport. */
+
         flock_up: flock_up {
             compatible = "zmk,behavior-force-adjust";
             #binding-cells = <0>;
@@ -256,6 +257,7 @@
             command = <FORCE_LOCK_UP>;
             amount = <100>;
         };
+
         flock_dn: flock_dn {
             compatible = "zmk,behavior-force-adjust";
             #binding-cells = <0>;
@@ -263,6 +265,7 @@
             command = <FORCE_LOCK_DOWN>;
             amount = <100>;
         };
+
         fclick_up: fclk_up {
             compatible = "zmk,behavior-force-adjust";
             #binding-cells = <0>;
@@ -270,6 +273,7 @@
             command = <FORCE_CLICK_UP>;
             amount = <100>;
         };
+
         fclick_dn: fclk_dn {
             compatible = "zmk,behavior-force-adjust";
             #binding-cells = <0>;
@@ -277,6 +281,7 @@
             command = <FORCE_CLICK_DOWN>;
             amount = <100>;
         };
+
         frel_up: frel_up {
             compatible = "zmk,behavior-force-adjust";
             #binding-cells = <0>;
@@ -284,6 +289,7 @@
             command = <FORCE_RELEASE_UP>;
             amount = <100>;
         };
+
         frel_dn: frel_dn {
             compatible = "zmk,behavior-force-adjust";
             #binding-cells = <0>;
@@ -378,8 +384,8 @@
         SYS {
             display-name = "SYS";
             bindings = <
-&bt BT_CLR  &bt BT_SEL 0  &bt BT_SEL 1  &bt BT_SEL 2  &bt BT_SEL 3  &bt BT_SEL 4  &flock_up  &fclick_up  &frel_up  &none  &none  &none
-&none       &none         &none         &none         &none         &none         &flock_dn  &fclick_dn  &frel_dn  &none  &none  &none
+&bt BT_CLR  &bt BT_SEL 0  &bt BT_SEL 1  &bt BT_SEL 2  &bt BT_SEL 3  &bt BT_SEL 4  &flock_up  &fclick_up  &frel_up     &none  &none         &none
+&none       &none         &none         &none         &none         &none         &flock_dn  &fclick_dn  &frel_dn     &none  &none         &none
 &none       &out OUT_TOG  &to 0         &bootloader   &sys_reset    &soft_off     &soft_off  &sys_reset  &bootloader  &to 0  &out OUT_TOG  &none
                                         &none         &none         &none         &none      &none       &none
             >;
@@ -388,9 +394,9 @@
         TP {
             display-name = "TP";
             bindings = <
-&none  &none         &none         &none      &none           &mkp MCLK  &mkp MCLK      &none      &none      &none  &none  &none
-&none  &kp LEFT_WIN  &kp LEFT_ALT  &kp LCTRL  &kp LEFT_SHIFT  &none      &mkp RCLK      &none      &none      &none  &none  &none
-&none  &none         &none         &mkp RCLK  &mkp LCLK       &none      &mkp LCLK      &none      &none      &none  &none  &none
+&none  &none         &none         &none      &none           &mkp MCLK  &mkp MCLK  &none      &none      &none  &none  &none
+&none  &kp LEFT_WIN  &kp LEFT_ALT  &kp LCTRL  &kp LEFT_SHIFT  &none      &mkp RCLK  &none      &none      &none  &none  &none
+&none  &none         &mkp MCLK     &mkp RCLK  &mkp LCLK       &none      &mkp LCLK  &none      &none      &none  &none  &none
                                    &mkp MCLK  &mkp RCLK       &mkp LCLK  &mkp LCLK  &mkp RCLK  &mkp MCLK
             >;
         };
