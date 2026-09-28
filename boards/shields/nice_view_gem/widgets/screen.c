@@ -5,6 +5,7 @@
 #include <zephyr/sys/atomic.h>
 #include <toucan/force_display.h>
 #include <toucan/force_status.h>
+#include <toucan/peripheral_status.h>
 #include <stdio.h>
 #include <lvgl.h>
 #include "../assets/custom_fonts.h"
@@ -15,7 +16,6 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/event_manager.h>
 #include <zmk/events/activity_state_changed.h>
 #include <zmk/events/battery_state_changed.h>
-#include <zmk/events/split_peripheral_status_changed.h>
 #include <zmk/events/ble_active_profile_changed.h>
 #include <zmk/events/endpoint_changed.h>
 #include <zmk/events/layer_state_changed.h>
@@ -35,6 +35,8 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/keymap.h>
 #include <zmk/usb.h>
 #include <zmk/split/central.h>
+#include <zmk/split/transport/central.h>
+#include <zephyr/sys/iterable_sections.h>
 
 #if defined(CONFIG_TOUCAN_STATUS_SCREEN) && CONFIG_TOUCAN_STATUS_SCREEN == 2
 #include "battery_arc.h"
@@ -63,10 +65,6 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include "screen.h"
 #include "sleep.h"
-
-struct connection_status_state {
-    bool connected;
-};
 
 static sys_slist_t widgets = SYS_SLIST_STATIC_INIT(&widgets);
 
@@ -123,7 +121,7 @@ static void settings_number(lv_obj_t *canvas,int x,int y,bool known,uint16_t val
 static void draw_force_settings(lv_obj_t *canvas,const struct status_state *state) {
     const struct toucan_force_levels *v=&state->force_levels;
     settings_text(canvas,4,2,94,&quinquefive_12,"FORCE");
-    settings_text(canvas,108,4,36,&quinquefive_8,"v19");
+    settings_text(canvas,108,4,36,&quinquefive_8,"v23");
     settings_text(canvas,4,20,64,&quinquefive_8,"REST");
     settings_text(canvas,78,20,64,&quinquefive_8,"MOVE");
     settings_text(canvas,4,34,136,&quinquefive_8,"Y/H LOCK");
@@ -231,22 +229,50 @@ ZMK_SUBSCRIPTION(widget_battery_status, zmk_usb_conn_state_changed);
 #endif /* IS_ENABLED(CONFIG_USB_DEVICE_STACK) */
 
 // R
+/* The central's battery cache starts at zero, which is not proof of a 0% sample.
+ * Only a received source-0 battery event can confirm zero. */
+static atomic_t peripheral_zero_received;
+static atomic_t peripheral_status_payload;
+
+static void peripheral_status_input(struct input_event *event) {
+    struct toucan_peripheral_status status;
+    if (event->type == INPUT_EV_ABS && event->code == TOUCAN_INPUT_PERIPHERAL_STATUS_CODE &&
+        toucan_peripheral_status_decode(event->value, &status)) {
+        atomic_set(&peripheral_status_payload, event->value);
+    }
+}
+INPUT_CALLBACK_DEFINE(DEVICE_DT_GET(DT_NODELABEL(trackpad_split)), peripheral_status_input);
+
+static bool right_peripheral_connected(void) {
+    STRUCT_SECTION_FOREACH(zmk_split_transport_central, transport) {
+        if (!transport->api || !transport->api->get_status ||
+            !transport->api->get_available_source_ids) continue;
+        struct zmk_split_transport_status status = transport->api->get_status();
+        if (!status.available || !status.enabled) continue;
+        uint8_t sources[ZMK_SPLIT_CENTRAL_PERIPHERAL_COUNT];
+        int count = transport->api->get_available_source_ids(sources);
+        for (int i = 0; i < count; i++) {
+            if (sources[i] == 0) return true;
+        }
+    }
+    return false;
+}
+
 static void set_battery_peripheral_status(
     struct zmk_widget_screen *widget,
     struct battery_peripheral_status_state state) {
-#if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
-    widget->state.charging_p = state.usb_present;
-#endif /* IS_ENABLED(CONFIG_USB_DEVICE_STACK) */
-
-    /* 기존 배터리 조회 코드: 원본 보존 */
-    // uint8_t level;
-    // zmk_split_central_get_peripheral_battery_level(0, &level);
-    //
-    // widget->state.battery_p = level;
-
+    if (widget->state.battery_p == state.level &&
+        widget->state.battery_p_known == state.known &&
+        widget->state.peripheral_connected == state.connected &&
+        widget->state.charging_p == state.usb_present) return;
     widget->state.battery_p = state.level;
-
-    draw_top(widget->obj, widget->cbuf, &widget->state);
+    widget->state.battery_p_known = state.known;
+    widget->state.peripheral_connected = state.connected;
+    widget->state.charging_p = state.usb_present;
+    if (widget->state.layer_index != FORCE_TP_LAYER &&
+        widget->state.layer_index != TOUCAN_FORCE_SYS_LAYER) {
+        draw_top(widget->obj, widget->cbuf, &widget->state);
+    }
 }
 
 static void battery_peripheral_status_update_cb(
@@ -263,24 +289,31 @@ battery_peripheral_status_get_state(const zmk_event_t *eh) {
     const struct zmk_peripheral_battery_state_changed *ev =
         as_zmk_peripheral_battery_state_changed(eh);
 
-    uint8_t level = 0;
-
-    if (ev != NULL) {
-        level = ev->state_of_charge;
-    } else {
-        /* 화면 초기화 때는 배터리 이벤트가 없을 수 있습니다. */
-        (void)zmk_split_central_get_peripheral_battery_level(0, &level);
-    }
-
-    return (struct battery_peripheral_status_state){
-        /* 기존 이벤트 직접 접근: 원본 보존 */
-        // .level = ev->state_of_charge,
-
-        .level = level,
-#if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
-        .usb_present = zmk_usb_is_powered(),
-#endif /* IS_ENABLED(CONFIG_USB_DEVICE_STACK) */
+    struct battery_peripheral_status_state state = {
+        .connected = right_peripheral_connected(),
     };
+    if (!state.connected) {
+        atomic_set(&peripheral_zero_received, 0);
+        atomic_set(&peripheral_status_payload, 0);
+        return state;
+    }
+    struct toucan_peripheral_status received;
+    if (toucan_peripheral_status_decode(atomic_get(&peripheral_status_payload), &received)) {
+        state.level = received.battery;
+        state.known = received.battery_known;
+        state.usb_present = received.usb_powered;
+        return state;
+    }
+    if (ev && ev->source == 0 && ev->state_of_charge <= 100) {
+        state.level = ev->state_of_charge;
+        state.known = true;
+        atomic_set(&peripheral_zero_received, state.level == 0);
+    } else if (zmk_split_central_get_peripheral_battery_level(0, &state.level) == 0) {
+        state.known = state.level <= 100 &&
+                      (state.level > 0 || atomic_get(&peripheral_zero_received));
+    }
+    if (!state.known) state.level = 0;
+    return state;
 }
 
 ZMK_DISPLAY_WIDGET_LISTENER(
@@ -394,6 +427,8 @@ ZMK_SUBSCRIPTION(widget_output_status, zmk_ble_active_profile_changed);
 #if defined(CONFIG_TOUCAN_STATUS_SCREEN) && CONFIG_TOUCAN_STATUS_SCREEN == 2
 
 #define MODIFIERS_REFRESH_MS 50
+#define PERIPHERAL_REFRESH_MS 250
+static int64_t peripheral_refresh_ms;
 
 static void modifiers_refresh_work_cb(struct k_work *work);
 
@@ -407,6 +442,15 @@ static void modifiers_refresh_work_cb(struct k_work *work) {
 
     if (is_sleep_screen_active()) {
         return;
+    }
+
+    /* Read local connection/battery caches on the existing display work item.
+     * No GATT reads, new thread, or mouse/input work is scheduled here. */
+    int64_t now = k_uptime_get();
+    if (now - peripheral_refresh_ms >= PERIPHERAL_REFRESH_MS) {
+        peripheral_refresh_ms = now;
+        widget_battery_peripheral_status_refresh_state(NULL);
+        widget_battery_peripheral_status_work_cb(NULL);
     }
 
     const uint8_t modifiers = modifiers_normalize(

@@ -1,6 +1,8 @@
 #include <zephyr/kernel.h>
 #include "battery_arc_peripheral.h"
 #include "../assets/custom_fonts.h"
+#include <stdio.h>
+#include "battery_charge.h"
 
 #define DOT_RADIUS      3
 #define BATTERY_DOTS    10
@@ -32,7 +34,7 @@ static void draw_dot_peripheral(lv_obj_t *canvas, int cx, int cy, int r, bool fi
     lv_canvas_draw_rect(canvas, cx - r, cy - r, r * 2, r * 2, &dsc);
 }
 
-static void draw_battery_arc_peripheral(lv_obj_t *canvas, const lv_point_t *dots, uint8_t level, bool blink_enabled)
+static void draw_battery_arc_peripheral(lv_obj_t *canvas, const lv_point_t *dots, uint8_t level)
 {
     int filled = (level + 9) / 10;
     if (filled > BATTERY_DOTS) filled = BATTERY_DOTS;
@@ -42,23 +44,28 @@ static void draw_battery_arc_peripheral(lv_obj_t *canvas, const lv_point_t *dots
     }
 }
 
-static void draw_battery_labels_peripheral(lv_obj_t *canvas, uint8_t level)
+static void draw_battery_labels_peripheral(lv_obj_t *canvas, const struct status_state *state)
 {
     lv_draw_label_dsc_t label_dsc;
     init_label_dsc(&label_dsc, LVGL_FOREGROUND, &quinquefive_12, LV_TEXT_ALIGN_CENTER);
     lv_canvas_draw_text(canvas, 81, 31, 56, &label_dsc, "R");
 
+    if (state->peripheral_connected && state->charging_p) {
+        draw_battery_charge(canvas, 109);
+        return;
+    }
+
     char buf[8];
-    snprintf(buf, sizeof(buf), "%d", level);
+    if (!state->peripheral_connected) snprintf(buf, sizeof(buf), "OFF");
+    else if (!state->battery_p_known) snprintf(buf, sizeof(buf), "--");
+    else snprintf(buf, sizeof(buf), "%u", (unsigned)state->battery_p);
     lv_draw_label_dsc_t label_dsc_txt;
     init_label_dsc(&label_dsc_txt, LVGL_FOREGROUND, &quinquefive_8, LV_TEXT_ALIGN_CENTER);
     lv_canvas_draw_text(canvas, 81, 45, 56, &label_dsc_txt, buf);
 }
 
 void draw_battery_peripheral_status(lv_obj_t *canvas, const struct status_state *state) {
-    uint8_t level = state->battery_p;
-    if (level > 0) {
-        draw_battery_arc_peripheral(canvas, bat_dots_peripheral, level, true);
-        draw_battery_labels_peripheral(canvas, level);
-    }
+    uint8_t level = state->peripheral_connected && state->battery_p_known ? state->battery_p : 0;
+    draw_battery_arc_peripheral(canvas, bat_dots_peripheral, level);
+    draw_battery_labels_peripheral(canvas, state);
 }

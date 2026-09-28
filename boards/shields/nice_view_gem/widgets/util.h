@@ -17,6 +17,8 @@
 struct status_state {
     uint8_t battery;
     uint8_t battery_p;
+    bool battery_p_known;
+    bool peripheral_connected;
     bool charging;
     bool charging_p;
     // 기존 타이핑 속도 상태: 원본 보존
