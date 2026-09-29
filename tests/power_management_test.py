@@ -10,6 +10,17 @@ import sys
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
+# ZMK merges the shield after user config. Guard against the old duplicate
+# latency=0 overriding the restored idle policy in the final configuration.
+merged = {}
+for path in ('config/toucan_left.conf', 'boards/shields/toucan/toucan_left.conf'):
+    for line in (root / path).read_text(encoding='utf-8').splitlines():
+        if line.startswith('CONFIG_') and '=' in line:
+            key, value = line.split('=', 1)
+            merged[key] = value
+assert merged['CONFIG_ZMK_SPLIT_BLE_PREF_LATENCY'] == '30'
+assert merged['CONFIG_BT_PERIPHERAL_PREF_LATENCY'] == '0'
+assert merged['CONFIG_BT_PERIPHERAL_PREF_MIN_INT'] == merged['CONFIG_BT_PERIPHERAL_PREF_MAX_INT'] == '12'
 driver = (root / 'modules/azoteq/drivers/input/tps43.c').read_text(encoding='utf-8')
 
 
