@@ -6,7 +6,16 @@
 
 □ 왼쪽 중앙 장치 적용 대상입니다. v24 오른쪽과 호환됩니다. 포스클릭, 드래그, 전력 관리, 마우스 BLE 경로, 화면 배치는 변경하지 않습니다. 설정 초기화는 필요하지 않습니다.
 
-□ 빌드와 산출물 검증: 진행 전. Windows 실기기 최소화 동작: 미확인.
+□ 검증: [GitHub Actions 36531178293](https://github.com/makeyouhigh/zmk-config-toucan2/actions/runs/36531178293)의 기존 포스클릭·전송·LCD·전력 검사, 양쪽 빌드 및 산출물 통합 성공. 소스 커밋 2b1ee09f5ea7c5a0456d107880d317e619db7529. 중앙 장치의 FULL Consumer 보고서, 실제 전처리된 단일 0x0C0206 바인딩과 40ms 눌림·해제, UF2 내부 코드와 ZIP/블록/nRF52840 기종을 확인했습니다. Windows 실기기 최소화 동작은 미확인입니다.
+
+□ 오른쪽 v25는 v24와 바이트 전체가 동일합니다. v24 사용자는 왼쪽만 적용하면 됩니다. 왼쪽 SYS 버전 문자열만 v25로 변경했습니다. PC BLE 간격 15ms·latency 0, 키보드 사이 latency 30, 오른쪽 진단 비활성을 유지했습니다.
+
+□ ZIP SHA256: 68d8dd2d86edb3f3822a0dddbe3369590a9a7c90257b4486e577fefeed22a387.
+
+| 파일 | SHA256 | 적용 |
+| --- | --- | --- |
+| toucan_left-v25.uf2 | 1133f6b5a9915fe6cc62510cbab65d699e6c2d0f042f61fed78902dcbb3fa9b0 | 왼쪽 적용 |
+| toucan_right-v25.uf2 | 9b1de23b6eb90bb34a0f3b7e978050f4352464ac9aaf1e5d896f2efe01156b23 | v24와 동일; 적용 불필요 |
 
 # 이전 버전 v24 — 오른쪽 대기 전력과 센서 절전 순서 수정 (2026-09-29)
 
