@@ -3,6 +3,7 @@
 
 #include <zephyr/device.h>
 #include <zephyr/kernel.h>
+#include <zephyr/pm/device.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/gpio.h>
@@ -279,8 +280,7 @@ static int tps43_set_suspend_internal(const struct device *dev, bool suspend, bo
     const struct tps43_config *config = dev->config;
     int ret = 0;
 
-    // If power management is disabled, or device is already in the desired state, do nothing
-    if (drv_data->suspended == suspend || !config->enable_power_management) {
+    if (!config->enable_power_management) {
         return 0;
     }
 
@@ -290,6 +290,14 @@ static int tps43_set_suspend_internal(const struct device *dev, bool suspend, bo
             LOG_WRN("Failed to acquire semaphore for suspend/resume");
             return -EBUSY;
         }
+    }
+
+    /* Test under the lock: a queued resume may have changed the state. */
+    if (drv_data->suspended == suspend) {
+        if (!lock_held) {
+            k_sem_give(&drv_data->lock);
+        }
+        return 0;
     }
 
     if (suspend && config->force_click) {
@@ -302,6 +310,8 @@ static int tps43_set_suspend_internal(const struct device *dev, bool suspend, bo
         ret = gpio_pin_interrupt_configure_dt(&config->rdy_gpio, GPIO_INT_DISABLE);
         if (ret == 0) {
             LOG_INF("RDY interrupts disabled before suspend");
+        } else {
+            goto done;
         }
     }
 
@@ -326,6 +336,10 @@ static int tps43_set_suspend_internal(const struct device *dev, bool suspend, bo
         ret = tps43_i2c_read_reg8(dev, TPS43_REG_SYSTEM_CONTROL_1, &control_reg);
     }
 
+    if (ret < 0) {
+        goto done;
+    }
+
     if (suspend) {
         control_reg |= TPS43_SUSPEND;
         LOG_INF("Entering suspend (low power consumption)");
@@ -336,12 +350,8 @@ static int tps43_set_suspend_internal(const struct device *dev, bool suspend, bo
 
     ret = tps43_i2c_write_reg8(dev, TPS43_REG_SYSTEM_CONTROL_1, control_reg);
     if (ret != 0) {
-        if (ret == -EIO && suspend) {
-            LOG_INF("Failed to write suspend, device already in suspend");
-            drv_data->suspended = true;
-            ret = 0;
-            goto done;
-        }
+        /* A register-write NACK is not proof of suspension. Only the separate
+         * END_COMM_WINDOW write is expected to NACK (IQS5xx section 8). */
         LOG_ERR("SYSTEM_CONTROL_1 write error: %d", ret);
         goto done;
     }
@@ -349,11 +359,14 @@ static int tps43_set_suspend_internal(const struct device *dev, bool suspend, bo
     drv_data->suspended = suspend;
 
 done:
-    // Enable RDY interrupts after resume
-    if (!suspend && config->rdy_gpio.port != NULL) {
-        ret = gpio_pin_interrupt_configure_dt(&config->rdy_gpio, GPIO_INT_EDGE_TO_ACTIVE);
-        if (ret == 0) {
+    // Restore interrupts after resume or a failed suspend; preserve I2C errors.
+    if (!drv_data->suspended && config->rdy_gpio.port != NULL) {
+        int irq_ret = gpio_pin_interrupt_configure_dt(&config->rdy_gpio, GPIO_INT_EDGE_TO_ACTIVE);
+        if (irq_ret == 0) {
             LOG_INF("RDY interrupts enabled");
+        }
+        if (ret == 0) {
+            ret = irq_ret;
         }
     }
     tps43_end_communication_window(dev);
@@ -1230,6 +1243,29 @@ static int tps43_set_suspend(const struct device *dev, bool suspend) {
     return tps43_set_suspend_internal(dev, suspend, false);
 }
 
+/* Suspend must finish before ZMK suspends I2C and powers the MCU off. Drain any
+ * earlier queued wake so it cannot undo the completed suspend. */
+static int tps43_set_power_sync(const struct device *dev, bool sleep) {
+    struct tps43_drv_data *data = dev->data;
+    struct k_work_sync sync;
+    atomic_set(&data->requested_sleep, sleep);
+    k_work_cancel_sync(&data->power_work, &sync);
+    return tps43_set_suspend(dev, sleep);
+}
+
+#if IS_ENABLED(CONFIG_PM_DEVICE)
+static int tps43_pm_action(const struct device *dev, enum pm_device_action action) {
+    switch (action) {
+    case PM_DEVICE_ACTION_SUSPEND:
+        return tps43_set_power_sync(dev, true);
+    case PM_DEVICE_ACTION_RESUME:
+        return tps43_set_power_sync(dev, false);
+    default:
+        return -ENOTSUP;
+    }
+}
+#endif
+
 /**
  * @brief Initializes TPS43 trackpad driver
  *
@@ -1416,7 +1452,9 @@ static int tps43_init(const struct device *dev) {
         .hold_time = DT_INST_PROP_OR(inst, hold_time, -1),                                           \
     };                                                                                               \
                                                                                                      \
-    DEVICE_DT_INST_DEFINE(inst, tps43_init, NULL, &tps43_##inst##_drvdata, &tps43_##inst##_config,   \
+    PM_DEVICE_DT_INST_DEFINE(inst, tps43_pm_action);                                                \
+    DEVICE_DT_INST_DEFINE(inst, tps43_init, PM_DEVICE_DT_INST_GET(inst),                              \
+                        &tps43_##inst##_drvdata, &tps43_##inst##_config,                             \
                         POST_KERNEL, CONFIG_INPUT_INIT_PRIORITY, NULL);                              \
     BUILD_ASSERT(DT_INST_REG_ADDR(inst) == TPS43_I2C_ADDR, "I2C address mismatch");                     \
     BUILD_ASSERT(!DT_INST_PROP(inst, three_finger_tap) || DT_INST_PROP(inst, force_click),             \
@@ -1460,6 +1498,9 @@ static void tps43_power_work(struct k_work *work) {
 int tps43_set_sleep(const struct device *dev, bool sleep) {
     if (dev == NULL) {
         return -EINVAL;
+    }
+    if (sleep) {
+        return tps43_set_power_sync(dev, true);
     }
     struct tps43_drv_data *data = dev->data;
     atomic_set(&data->requested_sleep, sleep);

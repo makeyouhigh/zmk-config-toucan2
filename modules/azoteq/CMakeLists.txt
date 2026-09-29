@@ -1,4 +1,7 @@
 zephyr_include_directories(include)
+if(CONFIG_ZMK_POINTING)
+  include(${CMAKE_CURRENT_LIST_DIR}/activity_filter.cmake)
+endif()
 add_subdirectory(drivers)
 target_sources(app PRIVATE src/behavior_force_config.c)
 target_sources(app PRIVATE src/behavior_force_adjust.c)
